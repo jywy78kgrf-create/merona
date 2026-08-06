@@ -39,6 +39,12 @@
   footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
     font-size:11.5px;color:var(--mute);line-height:1.7}
   footer a{color:var(--sub);border-bottom-color:rgba(109,100,121,.3)}
+  nav.topnav{display:flex;gap:22px;align-items:center;flex-wrap:wrap;margin-top:18px;
+    padding-bottom:12px;border-bottom:1px solid var(--line);font-family:var(--mono);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  nav.topnav a{color:var(--sub);text-decoration:none;border-bottom:none}
+  nav.topnav a:hover{color:var(--ink)}
+  nav.topnav a.active{color:var(--teal)}
 </style>
 </head>
 <body>
@@ -49,6 +55,13 @@
   <div class="sub">What merona reads, what it records about you, and what you can ask us to do about it.</div>
   <div class="asof">Version 1 &#183; 3 August 2026</div>
 </header>
+
+<nav class="topnav">
+  <a href="/">INDEX</a>
+  <a href="/mismatches">FREE CHECK</a>
+  <a href="/findings">FINDINGS</a>
+  <a href="https://api.merona.io/">API</a>
+</nav>
 
 <div class="tldr">
   <div class="k">The short version</div>

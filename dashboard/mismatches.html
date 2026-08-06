@@ -50,6 +50,12 @@
   footer{margin-top:26px;font-size:11px;color:var(--mute);line-height:1.6}
   footer a{color:var(--sub)}
   .err{padding:40px 0;text-align:center;color:var(--sub);font-family:var(--mono);font-size:13px}
+  nav.topnav{display:flex;gap:22px;align-items:center;flex-wrap:wrap;margin-top:18px;
+    padding-bottom:12px;border-bottom:1px solid var(--line);font-family:var(--mono);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  nav.topnav a{color:var(--sub);text-decoration:none}
+  nav.topnav a:hover{color:var(--ink)}
+  nav.topnav a.active{color:var(--teal)}
 </style>
 </head>
 <body>
@@ -61,6 +67,13 @@
   <div class="sub">The payout wallet an endpoint <b>advertises</b> vs what it <b>actually asks for</b> — every listed x402 endpoint, probed nightly, with each wallet's real on-chain settlement record attached.</div>
   <div class="asof" id="asof">loading…</div>
 </header>
+
+<nav class="topnav">
+  <a href="/">INDEX</a>
+  <a href="/mismatches" class="active">FREE CHECK</a>
+  <a href="/findings">FINDINGS</a>
+  <a href="https://api.merona.io/">API</a>
+</nav>
 
 <div class="note" id="disclaimer"></div>
 

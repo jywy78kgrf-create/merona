@@ -165,6 +165,112 @@ def _use_flush() -> None:
                   f"{type(e).__name__}: {e}", flush=True)
 _PROBE_RL = _Bucket(float(os.environ.get("PROBE_RPM", "30")),
                     float(os.environ.get("PROBE_BURST", "10")))
+# --- findings: the public record ------------------------------------------
+# Slug -> repo path, FIXED map (request paths never reach the filesystem).
+# Only documents that ship in the public repo may appear here — this is the
+# same set the public-release allowlist publishes.
+_DOC_SLUGS = {
+    "reconciliation": "docs/report/reconciliation_2026-07.md",
+    "headline":       "docs/report/headline_finding.md",
+    "coverage":       "docs/report/cross_chain_coverage_2026-08.md",
+    "census-gap":     "docs/report/census_gap.md",
+    "claims":         "docs/report/claims_vs_chains.md",
+    "service-census": "docs/report/service_census_2026-07.md",
+    "tempo":          "docs/report/tempo_measured.md",
+    "wash-spec":      "docs/WASH_V3_SPEC.md",
+    "revisions":      "docs/SCORE_REVISIONS.md",
+}
+
+# Curated feed entries for /feed.xml (slug, ISO date, kind, title, summary).
+# Mismatch items are appended live from the nightly feed at request time.
+_FINDINGS = [
+    ("reconciliation", "2026-07-31", "CORRECTION",
+     "Polygon: $143,926 withdrawn and restated to ~$1",
+     "A payer-side trace showed the published clean figure was ~100% one "
+     "funded loop — 5M sub-cent transactions cycling back to a single "
+     "wallet. Withdrawn and restated; the original stays visible."),
+    ("headline", "2026-07-28", "FINDING",
+     "The ~100x mirage: raw feed vs what actually settles",
+     "On Base in July the raw EIP-3009 stream ran $64.5M against ~$332K of "
+     "clean x402 settlement."),
+    ("coverage", "2026-08-03", "AUDIT",
+     "Cross-chain coverage: Arbitrum, Avalanche, Optimism",
+     "What merona can and cannot attribute on the unattributed chains, and "
+     "why they are watched but unscored."),
+    ("census-gap", "2026-07-13", "FINDING",
+     "The census gap: listed vs settling",
+     "Most cataloged x402 endpoints have never seen a real payment."),
+    ("wash-spec", "2026-08-02", "METHOD",
+     "Wash detection v3: cycles of any length",
+     "SCC decomposition plus net-flow balance — how funded loops get "
+     "flagged, and what earlier filters could not see."),
+    ("revisions", "2026-08-05", "METHOD",
+     "Score revisions: every rubric change, dated",
+     "Including evidence-tiered letter grades: unrated below 7 observed "
+     "days, provisional to 14, verified beyond."),
+]
+
+
+def _xml(s) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _rfc822(iso_day: str) -> str:
+    try:
+        d = datetime.strptime(iso_day[:10], "%Y-%m-%d")
+        return d.strftime("%a, %d %b %Y 00:00:00 GMT")
+    except Exception:
+        return "Thu, 01 Jan 2026 00:00:00 GMT"
+
+
+def _build_rss() -> bytes:
+    items = []
+    for slug, day, kind, title, summary in _FINDINGS:
+        link = f"https://merona.io/findings#{slug}"
+        items.append((day, f"""  <item>
+    <title>[{_xml(kind)}] {_xml(title)}</title>
+    <link>{_xml(link)}</link>
+    <guid isPermaLink="false">merona-finding-{_xml(slug)}</guid>
+    <pubDate>{_rfc822(day)}</pubDate>
+    <description>{_xml(summary)}</description>
+  </item>"""))
+    # live payTo mismatches from the nightly feed (recorded facts, not
+    # accusations — same in-band framing as the JSON)
+    try:
+        feed = json.loads((ROOT / "data" / "indexer" /
+                           "payto_mismatches.json").read_text())
+        for e in (feed.get("catalog_vs_live") or [])[:50]:
+            res = str(e.get("resource") or "")[:200]
+            day = str(e.get("probe_date") or "")[:10]
+            adv = str(e.get("advertised_payto") or "")[:64]
+            live = ", ".join(str(x)[:64] for x in
+                             (e.get("live_paytos") or [])[:4])
+            items.append((day, f"""  <item>
+    <title>payTo mismatch: {_xml(res)}</title>
+    <link>https://merona.io/mismatches</link>
+    <guid isPermaLink="false">merona-mismatch-{_xml(res)}-{_xml(adv)}</guid>
+    <pubDate>{_rfc822(day)}</pubDate>
+    <description>Catalog advertises {_xml(adv)}; endpoint is asking {_xml(live)}. Recorded facts, not accusations — payout-address integrity is one signal, not a guarantee.</description>
+  </item>"""))
+    except Exception:
+        pass
+    items.sort(key=lambda x: x[0], reverse=True)
+    body = "\n".join(x[1] for x in items)
+    rss = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>merona — x402 settlement index</title>
+  <link>https://merona.io/findings</link>
+  <description>Findings, corrections and payTo-integrity mismatches from the independent x402 settlement index. Recorded facts, not accusations.</description>
+  <language>en</language>
+{body}
+</channel>
+</rss>
+"""
+    return rss.encode()
+
+
 # In-memory page cache (mtime-checked) so we don't re-read 130KB per request.
 _page_cache = {"bytes": None, "mtime": 0}
 
@@ -657,12 +763,37 @@ class Handler(BaseHTTPRequestHandler):
                            cache="public, max-age=900")
             except Exception:
                 self._send(404, b"not found", "text/plain")
-        elif path in ("/privacy", "/editorial"):
-            # Static policy pages. Named from a fixed whitelist, never from the
+        elif path.startswith("/docs/") and path.endswith(".md"):
+            # Findings reader source: slug -> file via a FIXED map. The request
+            # path selects a dictionary key only — it never reaches the
+            # filesystem, so there is no traversal surface. Slugs mirror the
+            # public-release allowlist: only docs that ship in the public repo
+            # are servable here.
+            doc = _DOC_SLUGS.get(path[len("/docs/"):-len(".md")])
+            if not doc:
+                return self._send(404, b"not found", "text/plain")
+            try:
+                body = (ROOT / doc).read_bytes()
+                self._send(200, body, "text/markdown; charset=utf-8",
+                           cache="public, max-age=900")
+            except Exception:
+                self._send(404, b"not found", "text/plain")
+        elif path == "/feed.xml":
+            # RSS: findings/corrections (curated) + current payTo mismatches
+            # (from the nightly feed). Everything XML-escaped; feed content is
+            # recorded facts only, same disclaimer as the JSON.
+            try:
+                self._send(200, _build_rss(), "application/rss+xml; charset=utf-8",
+                           cache="public, max-age=900")
+            except Exception:
+                self._send(503, b"feed unavailable", "text/plain")
+        elif path in ("/privacy", "/editorial", "/findings"):
+            # Static pages. Named from a fixed whitelist, never from the
             # request path — the mapping is the only thing that can reach disk.
             try:
                 name = {"/privacy": "privacy.html",
-                        "/editorial": "editorial.html"}[path]
+                        "/editorial": "editorial.html",
+                        "/findings": "findings.html"}[path]
                 body = (ROOT / "dashboard" / name).read_bytes()
                 self._send(200, body, "text/html; charset=utf-8",
                            cache="public, max-age=3600")

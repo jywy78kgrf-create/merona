@@ -66,6 +66,12 @@
     background:#fff; color:var(--ink); font-family:var(--mono); font-size:10.5px;
     box-shadow:0 2px 10px rgba(38,32,41,.10), 0 1px 2px rgba(38,32,41,.08); white-space:nowrap}
   .chip .ok{color:#1d8a5e; font-weight:500}
+  .hnav{display:flex; align-items:center; gap:clamp(16px,2.2vw,30px);
+    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.15em}
+  .hnav a{color:var(--sub); text-decoration:none}
+  .hnav a:hover{color:var(--ink)}
+  .hnav a.on{color:var(--teal)}
+  @media(max-width:1240px){.hnav{display:none}}
   .dot{width:6px;height:6px;border-radius:50%;flex:none}
   .dot.good{background:#2aa06c} .dot.warn{background:#d99a2b} .dot.crit{background:#c94f3d}
 
@@ -412,6 +418,7 @@
     <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#0d0b11"/><text x="38" y="66" font-family="Sora" font-weight="600" font-size="52" fill="#efe9e2" text-anchor="middle">m</text><rect x="66" y="56" width="11" height="11" rx="2.5" fill="#2fd6c3"/></svg>
     <div class="brand"><div class="brow"><h1>merona</h1><span class="sub"><span style="color:#bd5c5c">x402</span> settlement index</span></div><div class="tagline">Verify what actually settles. Every chain. Every night.</div></div>
   </div>
+  <nav class="hnav" aria-label="site navigation"><a class="on" href="/">INDEX</a><a href="/mismatches">FREE CHECK</a><a href="/findings">FINDINGS</a><a href="https://api.merona.io/">API</a></nav>
   <div class="chips">
     <span class="chip"><span class="dot good" data-h="cycle"></span><span class="ok" data-f="cycle.text">Cycle complete</span>&nbsp;·&nbsp;<span data-f="cycle.when">08 Jul 02:17 UTC</span></span>
     <span class="chip">snapshot&nbsp;<b data-f="cycle.snap">#4</b>&nbsp;· next&nbsp;<span data-f="cycle.next">02:17</span></span>
@@ -574,7 +581,7 @@
   </div>
 </div>
 
-<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
+<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
 
 <script>
 (() => {
@@ -582,9 +589,11 @@
   const reduced=matchMedia('(prefers-reduced-motion:reduce)').matches;
   let W,H,DPR,baseY=0,t0=null,lastT=0;
   const chains=[
-    {key:'base',   n:1074634, light:'#8fdfd4', mid:'#2fb5a8', dark:'#1b7f76', top:'#b9ede6'},
-    {key:'polygon',n:337773,  light:'#bda6f2', mid:'#8a63d8', dark:'#5a3aa8', top:'#d8c9fa'},
-    {key:'solana', n:36558,   light:'#f6c477', mid:'#eda23e', dark:'#b8722a', top:'#fbdda6'},
+    // clean/series are filled from live stats.json (applyInstr -> setSceneData).
+    // The seeds below only shape the first paint before stats land.
+    {key:'base',   n:1074634, clean:1, series:null, light:'#8fdfd4', mid:'#2fb5a8', dark:'#1b7f76', top:'#b9ede6'},
+    {key:'polygon',n:337773,  clean:1, series:null, light:'#bda6f2', mid:'#8a63d8', dark:'#5a3aa8', top:'#d8c9fa'},
+    {key:'solana', n:36558,   clean:1, series:null, light:'#f6c477', mid:'#eda23e', dark:'#b8722a', top:'#fbdda6'},
   ];
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), ease=x=>1-Math.pow(1-x,3);
   const backOut=x=>{const c=1.70158; const t=x-1; return 1+(c+1)*t*t*t+c*t*t;};
@@ -596,6 +605,22 @@
 
   // ---- bar cities: one skyline per chain, grows behind its tier ----
   let clusters=[];
+  // Live wiring: the cards and the skylines must never disagree, so the scene
+  // takes its numbers from the same stats payload instead of literals.
+  window.setSceneData=function(clean,series){
+    let changed=false;
+    chains.forEach(ch=>{
+      const c=clean&&clean[ch.key];
+      if(c&&typeof c.volume_usd==='number'&&c.volume_usd!==ch.clean){
+        ch.clean=Math.max(c.volume_usd,0); changed=true; }
+      const sr=series&&series[ch.key];
+      if(Array.isArray(sr)&&sr.length){
+        const vals=sr.slice(-30).map(x=>Math.max(0,+(x&&x.v)||0));
+        if(!ch.series||ch.series.length!==vals.length){ ch.series=vals; changed=true; }
+      }
+    });
+    if(changed) buildClusters();
+  };
   function buildClusters(){
     clusters=[];
     // Anchor each grove to the real center of its card so they always line up,
@@ -608,11 +633,15 @@
     // never saturates as volumes grow), on a sqrt curve — big enough to show a
     // real 14x gap between Base and Polygon, gentle enough that tiny Solana
     // still gets a visible grove instead of vanishing.
-    const maxN=Math.max(...chains.map(c=>c.n||0),15000);
+    const maxCl=Math.max(...chains.map(c=>c.clean||0),1);
     chains.forEach((ch,ci)=>{
       const el=cards[ci], rect=(!stacked&&el)?el.getBoundingClientRect():null;
       const center=(rect&&rect.width)?rect.left+rect.width/2:fallback[ci];
-      const ratio=clamp(Math.sqrt((ch.n||0)/maxN),0.08,1);
+      // Grove mass = CLEAN x402 volume — the same metric and window as the
+      // figure on the card below it. It used to be settlement COUNT, the very
+      // metric this index exists to discredit: that handed a ~$1 chain the
+      // second-largest visual on the page, so the art argued against the data.
+      const ratio=clamp(Math.sqrt((ch.clean||0)/maxCl),0.14,1);
       const cols=Math.round(6+10*ratio), rows=3;
       const bw=clamp(W*0.011,10,20), gap=bw*0.34;
       const spanW=cols*(bw+gap);
@@ -620,14 +649,19 @@
       // drawing rightward — pull the origin back so the VISUAL mass sits
       // centered on the card, not just the front row's left edges.
       const cx=center-(bw*0.52)/2-(bw*0.45*(rows-1))/2;
-      const maxH=H*0.20*(0.4+0.6*ratio);
+      const maxH=H*0.20*(0.10+0.90*ratio);
       const r=mulberry(701+ci*577);
+      // one bar per day of the trailing 30 — the bar-to-bar shape is the
+      // chain's real daily clean-volume rhythm, not decorative noise.
+      const ser=(ch.series&&ch.series.length)?ch.series:null;
+      const smax=ser?Math.max(1,...ser):1;
       const bars=[];
       for(let row=rows-1;row>=0;row--){
         const rc=cols-row, x0=cx-spanW/2+row*bw*0.45;
         for(let c=0;c<rc;c++){
           const bell=1-Math.abs(c-(rc-1)/2)/Math.max(1,(rc-1)/2)*0.55;
-          const h=(maxH*(0.25+0.75*r())*bell)+14;
+          const dv=ser?(ser[(c+row*7)%ser.length]/smax):r();
+          const h=(maxH*(0.25+0.75*dv)*bell)+10;
           // one column at a time: delay walks left→right across the grove
           // (all three groves build in parallel, slightly offset), the back
           // rows of a column landing a beat after its front face.
@@ -709,8 +743,8 @@
     g.fillStyle=rg; g.beginPath();
     g.arc(cx,cy,R,0,7); g.arc(cx,cy,R*0.62,0,7,true); g.fill('evenodd');
     // iridescent data disc: chain share pie
-    const total=chains.reduce((a,c)=>a+c.n,0); let a0=-Math.PI/2+t*0.00004;
-    chains.forEach(ch=>{ const a1=a0+(ch.n/total)*Math.PI*2;
+    const total=chains.reduce((a,c)=>a+(c.clean||0),0)||1; let a0=-Math.PI/2+t*0.00004;
+    chains.forEach(ch=>{ const a1=a0+((ch.clean||0)/total)*Math.PI*2;
       const pg=g.createLinearGradient(cx-R*0.6,cy-R*0.6,cx+R*0.6,cy+R*0.6);
       pg.addColorStop(0,ch.light); pg.addColorStop(1,ch.dark);
       g.fillStyle=pg; g.beginPath(); g.moveTo(cx,cy);
@@ -1049,6 +1083,8 @@
         (U.ratio!=null?' ('+(U.ratio*100).toFixed(2)+'%)':''));
     });
     if(I.pulse) drawPulse(I.pulse);
+    // hero scene reads the same clean numbers as the cards
+    if(I.clean||I.clean_series) window.setSceneData&&window.setSceneData(I.clean,I.clean_series);
   }catch(e){ console.error('[merona] render failed:', e); } }
   function drawPulse(P){
     const el=document.getElementById('pulse'); if(!el) return;

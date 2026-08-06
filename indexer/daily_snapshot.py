@@ -19,7 +19,7 @@ import csv
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -594,6 +594,27 @@ def build_instr_metrics(store: Store) -> dict:
                           "excluded": ex, "flagged_sellers": fl}
             if cm:
                 out["clean"] = {"date": d, **cm}
+    except Exception:
+        pass
+
+    # Clean series: per-chain daily clean volume over the trailing 30 days.
+    # Published so the dashboard's hero skylines can be bound to the SAME
+    # metric and window as the clean figure on each card — one bar per day.
+    # Previously the art was bound to settlement COUNT, which is the metric
+    # this index exists to discredit: it gave a ~$1 chain the second-largest
+    # visual on the page.
+    try:
+        cutoff = (datetime.now(timezone.utc).date()
+                  - timedelta(days=30)).isoformat()
+        series: dict = {}
+        for ch, md, cv in store.db.execute(store.q(
+                "SELECT chain, measured_date, clean_volume_usd FROM "
+                "clean_metrics WHERE measured_date >= ? "
+                "ORDER BY measured_date"), (cutoff,)).fetchall():
+            series.setdefault(ch, []).append(
+                {"d": md, "v": round(float(cv or 0), 2)})
+        if series:
+            out["clean_series"] = series
     except Exception:
         pass
 
