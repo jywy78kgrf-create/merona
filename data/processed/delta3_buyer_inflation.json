@@ -1,0 +1,12 @@
+{
+  "generated": "2026-07-03T06:58:23.803737+00:00",
+  "complete_history_sellers": 3162,
+  "inflation_ratio_census_over_recomputed": {
+    "median": 1.0,
+    "p25": 1.0,
+    "p75": 1.0,
+    "p95": 1.0,
+    "share_exact_match": 0.939
+  },
+  "method": "census unique_buyers / recomputed unique payers, sellers with complete transfer history only; recomputed counts dedupe payer wallets across chains."
+}

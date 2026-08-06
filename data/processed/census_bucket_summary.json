@@ -1,0 +1,55 @@
+{
+  "generated": "2026-07-03T06:58:20.182834+00:00",
+  "total_sellers": 163417,
+  "buckets": {
+    "GHOST": {
+      "sellers": 112694,
+      "share_sellers": 0.6896,
+      "tx": 180861,
+      "volume_base_units": 718481025738.0,
+      "share_volume": 0.0138
+    },
+    "TEST_RIG": {
+      "sellers": 41104,
+      "share_sellers": 0.2515,
+      "tx": 3071789,
+      "volume_base_units": 2788366468185.0,
+      "share_volume": 0.0537
+    },
+    "DORMANT": {
+      "sellers": 4804,
+      "share_sellers": 0.0294,
+      "tx": 76892093,
+      "volume_base_units": 29479392470449.0,
+      "share_volume": 0.568
+    },
+    "LOW_ACTIVITY": {
+      "sellers": 3462,
+      "share_sellers": 0.0212,
+      "tx": 560075,
+      "volume_base_units": 85840502258.0,
+      "share_volume": 0.0017
+    },
+    "ACTIVE_LEGITIMATE": {
+      "sellers": 1125,
+      "share_sellers": 0.0069,
+      "tx": 99959043,
+      "volume_base_units": 18526172427820.0,
+      "share_volume": 0.357
+    },
+    "DUPLICATE": {
+      "sellers": 228,
+      "share_sellers": 0.0014,
+      "tx": 5519859,
+      "volume_base_units": 302967506999.0,
+      "share_volume": 0.0058
+    }
+  },
+  "notes": [
+    "Census pass only: TEST_RIG here means <=2 unique payers with >=5 tx;",
+    "deep transfer signals refine TEST_RIG/MEMECOIN in classify_final.py.",
+    "LOW_ACTIVITY = recent multi-buyer sellers below the sustained bar;",
+    "they are not ACTIVE_LEGITIMATE candidates but are covered by the",
+    "control sample for error estimation."
+  ]
+}

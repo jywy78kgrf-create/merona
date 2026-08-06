@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-commerce-index"
+version = "0.1.0"
+description = "Independent on-chain index of x402 / agentic-commerce settlements (Base + Solana) with recurring immutable snapshots"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+# Postgres backend (set X402_DB_URL to activate); SQLite needs no extra deps.
+postgres = ["psycopg[binary]>=3.1"]
+# Registrar: signature verification for facilitator self-declarations
+# (registrar/SELF-DECLARATION.md) — EVM via eth-account, Solana via PyNaCl.
+registrar = ["eth-account>=0.11", "PyNaCl>=1.5"]
+
+# Flat script layout (indexer/*.py imported via path insertion in tests) — there
+# is no importable package to build, so install is deps-only.
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["indexer/tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# bug-focused, low-noise: pyflakes (real bugs: undefined names, unused imports,
+# bad f-strings), syntax errors, and bugbear — minus rules that are noisy
+# false-positives in this codebase.
+select = ["F", "E9", "B"]
+ignore = ["B007", "B023", "B905"]

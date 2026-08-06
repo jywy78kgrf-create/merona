@@ -1,0 +1,164 @@
+{
+ "meta": {
+  "generated_from_catalog": "2026-07-23",
+  "layer_vintages": {
+   "catalog": "2026-07-23",
+   "liveness": "2026-07-03",
+   "origin_wallet_map": "2026-07-01",
+   "behavior_buckets": "2026-07-03",
+   "seller_aggregates": "latest snapshot on disk",
+   "paid_probes": "2026-07 pilot (n small)"
+  }
+ },
+ "categories": {
+  "swarm-platform": {
+   "origins": 4,
+   "listings": 220,
+   "settled_usd": 20483485.029999997,
+   "buyers": 2530112,
+   "tiers": {
+    "T2": 2,
+    "T1+": 1,
+    "T0": 1
+   }
+  },
+  "unclassified": {
+   "origins": 887,
+   "listings": 3974,
+   "settled_usd": 14290562.089999944,
+   "buyers": 49415,
+   "tiers": {
+    "T2": 286,
+    "T0": 383,
+    "T1": 130,
+    "T1+": 88
+   }
+  },
+  "ai-services": {
+   "origins": 97,
+   "listings": 550,
+   "settled_usd": 14636612.079999994,
+   "buyers": 155972,
+   "tiers": {
+    "T2": 37,
+    "T0": 32,
+    "T1": 16,
+    "T1+": 12
+   }
+  },
+  "market-data": {
+   "origins": 308,
+   "listings": 4168,
+   "settled_usd": 13048434.679999987,
+   "buyers": 15238,
+   "tiers": {
+    "T2": 127,
+    "T1+": 26,
+    "T0": 113,
+    "T1": 42
+   }
+  },
+  "crypto-infra": {
+   "origins": 4,
+   "listings": 450,
+   "settled_usd": 600084.7100000001,
+   "buyers": 63956,
+   "tiers": {
+    "T2": 3,
+    "T0": 1
+   }
+  },
+  "agent-tooling": {
+   "origins": 160,
+   "listings": 1317,
+   "settled_usd": 204433.25999999992,
+   "buyers": 21162,
+   "tiers": {
+    "T2": 55,
+    "T1": 34,
+    "T0": 53,
+    "T1+": 18
+   }
+  },
+  "real-world-data": {
+   "origins": 43,
+   "listings": 1025,
+   "settled_usd": 36764.42000000001,
+   "buyers": 4608,
+   "tiers": {
+    "T2": 21,
+    "T0": 10,
+    "T1+": 5,
+    "T1": 7
+   }
+  },
+  "novelty-other": {
+   "origins": 30,
+   "listings": 221,
+   "settled_usd": 87233.89999999997,
+   "buyers": 6010,
+   "tiers": {
+    "T2": 28,
+    "T1+": 1,
+    "T0": 1
+   }
+  },
+  "staging-leak": {
+   "origins": 14,
+   "listings": 129,
+   "settled_usd": 3250.6699999999996,
+   "buyers": 315,
+   "tiers": {
+    "T2": 4,
+    "T0": 6,
+    "T1": 4
+   }
+  },
+  "dev-utilities": {
+   "origins": 66,
+   "listings": 1458,
+   "settled_usd": 1177.71,
+   "buyers": 474,
+   "tiers": {
+    "T2": 12,
+    "T1": 10,
+    "T0": 25,
+    "T1+": 19
+   }
+  },
+  "web-scraping": {
+   "origins": 15,
+   "listings": 364,
+   "settled_usd": 286.68999999999994,
+   "buyers": 115,
+   "tiers": {
+    "T2": 5,
+    "T0": 5,
+    "T1": 3,
+    "T1+": 2
+   }
+  },
+  "listing-farm": {
+   "origins": 2,
+   "listings": 11021,
+   "settled_usd": 190.87,
+   "buyers": 20,
+   "tiers": {
+    "T2": 1,
+    "T0": 1
+   }
+  },
+  "gambling-novelty": {
+   "origins": 12,
+   "listings": 30,
+   "settled_usd": 0.06,
+   "buyers": 0,
+   "tiers": {
+    "T2": 1,
+    "T0": 5,
+    "T1": 5,
+    "T1+": 1
+   }
+  }
+ }
+}

@@ -1,0 +1,4 @@
+# x402 endpoint quality audit — pinned to the versions used for the committed run.
+requests==2.33.1
+PyYAML==6.0.1
+matplotlib==3.11.0

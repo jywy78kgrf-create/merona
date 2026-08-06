@@ -1,0 +1,44 @@
+{
+  "generated": "2026-07-03T06:58:24.407034+00:00",
+  "control_sellers_classified": 1500,
+  "transition_matrix_census_to_final": {
+    "ACTIVE_LEGITIMATE": {
+      "ACTIVE_LEGITIMATE": 1.0
+    },
+    "DORMANT": {
+      "DORMANT": 0.8125,
+      "MEMECOIN": 0.0312,
+      "TEST_RIG": 0.1562
+    },
+    "GHOST": {
+      "GHOST": 1.0
+    },
+    "LOW_ACTIVITY": {
+      "LOW_ACTIVITY": 0.8718,
+      "TEST_RIG": 0.1282
+    },
+    "TEST_RIG": {
+      "TEST_RIG": 1.0
+    }
+  },
+  "control_corrected_population_shares": {
+    "GHOST": 0.6896,
+    "TEST_RIG": 0.26,
+    "DORMANT": 0.0238,
+    "LOW_ACTIVITY": 0.0183,
+    "ACTIVE_LEGITIMATE": 0.0058,
+    "DUPLICATE": 0.0013,
+    "MEMECOIN": 0.0012
+  },
+  "caveat": "Correction applies control-sample transition rates to census counts; small cells have wide error bars \u2014 see per-cell counts.",
+  "cell_counts": {
+    "ACTIVE_LEGITIMATE->ACTIVE_LEGITIMATE": 9,
+    "DORMANT->DORMANT": 52,
+    "DORMANT->MEMECOIN": 2,
+    "DORMANT->TEST_RIG": 10,
+    "GHOST->GHOST": 1055,
+    "LOW_ACTIVITY->LOW_ACTIVITY": 34,
+    "LOW_ACTIVITY->TEST_RIG": 5,
+    "TEST_RIG->TEST_RIG": 333
+  }
+}

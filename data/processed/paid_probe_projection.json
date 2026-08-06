@@ -1,0 +1,30 @@
+{
+  "generated": "2026-07-03T07:07:17.707037+00:00",
+  "seed": 402402,
+  "universe_valid_402_bazaar_urls": 1759,
+  "candidates_after_price_filter": 1660,
+  "after_operator_dedup": 222,
+  "pool_sizes": {
+    "low_new": 48,
+    "mid_activity": 142,
+    "top_volume": 32
+  },
+  "sample_sizes": {
+    "top_volume": 25,
+    "mid_activity": 25,
+    "low_new": 25
+  },
+  "projected_spend_usdc": 8.01,
+  "budget_cap_usdc": 50.0,
+  "halt_at_usdc": 45.0,
+  "price_distribution": {
+    "min": 0.0001,
+    "median": 0.01,
+    "max": 1.0
+  },
+  "networks": {
+    "base": 40,
+    "eip155:8453": 35
+  },
+  "status": "DESIGN ONLY \u2014 no payment executes without explicit user go"
+}

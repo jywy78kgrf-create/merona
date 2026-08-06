@@ -1,0 +1,314 @@
+{
+ "params": {
+  "min_usd": 100.0,
+  "ratio": 0.05,
+  "witnessed": true
+ },
+ "results": [
+  {
+   "chain": "base",
+   "scopable": true,
+   "witnessed_floor": 48172964,
+   "relayer_set_size": 128,
+   "scoped_volume_usd": 531991.24,
+   "n_wallets": 93996,
+   "n_candidates": 4,
+   "candidate_inflow_usd": 1892.45,
+   "candidate_share_of_scoped": 0.0036,
+   "candidates": [
+    {
+     "wallet": "0x5f114bb1b71f78fcc601ecc479978d685f2d468a",
+     "inflow_usd": 616.74,
+     "outflow_usd": 616.74,
+     "balance_ratio": 0.0,
+     "throughput_usd": 616.74
+    },
+    {
+     "wallet": "0xc7f347369e5e26c03c050c5ec9cc366b1819c044",
+     "inflow_usd": 616.74,
+     "outflow_usd": 616.74,
+     "balance_ratio": 0.0,
+     "throughput_usd": 616.74
+    },
+    {
+     "wallet": "0x66c40946b0dffd04be467e18309857307ecd37cb",
+     "inflow_usd": 514.0,
+     "outflow_usd": 514.0,
+     "balance_ratio": 0.0,
+     "throughput_usd": 514.0
+    },
+    {
+     "wallet": "0x0f8d712bcf70cf33feee01fd12a4f6f913ecb8bf",
+     "inflow_usd": 144.97,
+     "outflow_usd": 144.97,
+     "balance_ratio": 1e-05,
+     "throughput_usd": 144.97
+    }
+   ]
+  },
+  {
+   "chain": "polygon",
+   "scopable": true,
+   "witnessed_floor": 0,
+   "relayer_set_size": 27,
+   "scoped_volume_usd": 149463.76,
+   "n_wallets": 60,
+   "n_candidates": 32,
+   "candidate_inflow_usd": 149462.64,
+   "candidate_share_of_scoped": 1.0,
+   "candidates": [
+    {
+     "wallet": "0x897720c5b19f93f3194990d0121d3a64783bbab8",
+     "inflow_usd": 49800.0,
+     "outflow_usd": 49980.0,
+     "balance_ratio": 0.0036,
+     "throughput_usd": 49980.0
+    },
+    {
+     "wallet": "0x66fa4d79ca84016b42352be33c908dd812952ec8",
+     "inflow_usd": 49682.64,
+     "outflow_usd": 49800.0,
+     "balance_ratio": 0.00236,
+     "throughput_usd": 49800.0
+    },
+    {
+     "wallet": "0x52e6d9b8fd9f3cd60f6e92f0750ee1dd43a62260",
+     "inflow_usd": 1700.0,
+     "outflow_usd": 1655.5,
+     "balance_ratio": 0.02618,
+     "throughput_usd": 1700.0
+    },
+    {
+     "wallet": "0x47fe1c4272e7bb0c538dc9f0eea41404eef39e6f",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1656.44,
+     "balance_ratio": 0.01402,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0x1f93d79a6884efee10bb49a06277a3a95e802f00",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1656.54,
+     "balance_ratio": 0.01396,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0x474bedc39654bb55e84ec6701011a2f618e7849f",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1657.76,
+     "balance_ratio": 0.01324,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0xa697afe359defc010857e173e7021407ff92b2bf",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1655.25,
+     "balance_ratio": 0.01473,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0x38329f3eb15ba1d11190305633f8c7a9fb156b43",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1653.93,
+     "balance_ratio": 0.01552,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0x59a35233502dfd65f02c8b09f988ffdfc2bc64c4",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1655.16,
+     "balance_ratio": 0.01479,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0xc99fe62d1972ca01304b173d5caa602721363d10",
+     "inflow_usd": 1680.0,
+     "outflow_usd": 1655.74,
+     "balance_ratio": 0.01444,
+     "throughput_usd": 1680.0
+    },
+    {
+     "wallet": "0x535cb97ea531d75a6d2251ee10b5909aa2b6ca12",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1657.51,
+     "balance_ratio": 0.0015,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0xe1ec023f5c95d4244803aa2acd661fca06b67a75",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1657.39,
+     "balance_ratio": 0.00157,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x1e4b5cd7a158be252abddd647d0cbc8fce790654",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.14,
+     "balance_ratio": 0.00293,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x3863f3611ff0cf23af3983266a8f950610436c2b",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1654.44,
+     "balance_ratio": 0.00335,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x96c44eb92ac1eba7c920587a609c47fa270959c3",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1653.54,
+     "balance_ratio": 0.00389,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x0b797ccb54574ed07d84597761500e1d1d8db32e",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1657.27,
+     "balance_ratio": 0.00164,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0xc2f04240aecf3c6ae75f2378b13d9713de29f18a",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1653.52,
+     "balance_ratio": 0.0039,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x002d0d2f9b54c9f5ba4cbd11e422bfcee2aede4d",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1658.97,
+     "balance_ratio": 0.00062,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0xf5ddb8cc86bd4551be3d2268aa6e18b2d0c659b7",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1658.85,
+     "balance_ratio": 0.00069,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x480b5a88239fc88a8369e9a5448bd5e095bef121",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.68,
+     "balance_ratio": 0.0026,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x04dca2b22d94bf2dc75274cea30979be01af6e77",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1657.11,
+     "balance_ratio": 0.00174,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x00572b71ff076e3ca723488fa29ec5f85ec6c34a",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1654.69,
+     "balance_ratio": 0.0032,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x7b3fe9333e0186b3998805d1408665284b0bb11e",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.89,
+     "balance_ratio": 0.00248,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x21bded8d7b0cfc3cc71ed6a8ee1daae64bfc3f18",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1656.45,
+     "balance_ratio": 0.00214,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x76d5d847b2df928a842b47794a7943c3dfc434a1",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1656.65,
+     "balance_ratio": 0.00202,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x27f1ca0cf425f3a64dd6d7a95f75f8f5907bf72f",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.48,
+     "balance_ratio": 0.00272,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x7fd421c6d200279a9935200a9c4b6249ff5ff260",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1656.03,
+     "balance_ratio": 0.00239,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x2d5de05b890db6c661c5c992d042606994a30042",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.6,
+     "balance_ratio": 0.00265,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0xd997f7e75ec1b12911b4fae90a0dbb1cfbca66cb",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1658.03,
+     "balance_ratio": 0.00119,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0xf133924cd7b8e940b5df95f3a29385898716bc27",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.94,
+     "balance_ratio": 0.00245,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x2eef36bd4ef5c6520b520e407eb8acd9e56881f5",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1656.89,
+     "balance_ratio": 0.00187,
+     "throughput_usd": 1660.0
+    },
+    {
+     "wallet": "0x3000c7b212974e3479f608fb2d7d9788b3126dec",
+     "inflow_usd": 1660.0,
+     "outflow_usd": 1655.25,
+     "balance_ratio": 0.00286,
+     "throughput_usd": 1660.0
+    }
+   ]
+  },
+  {
+   "chain": "solana",
+   "scopable": true,
+   "witnessed_floor": 0,
+   "relayer_set_size": 25,
+   "scoped_volume_usd": 58408.62,
+   "n_wallets": 3041,
+   "n_candidates": 2,
+   "candidate_inflow_usd": 291.38,
+   "candidate_share_of_scoped": 0.005,
+   "candidates": [
+    {
+     "wallet": "jMEN441Dca2zR1JUPunu2t4eUSxvwFHpbUK3a7UDaYn",
+     "inflow_usd": 188.15,
+     "outflow_usd": 188.15,
+     "balance_ratio": 0.0,
+     "throughput_usd": 188.15
+    },
+    {
+     "wallet": "A5z92pfbEEJquC3yqK8Hp4JpkkxUM6yyWzwqkGttHWDn",
+     "inflow_usd": 103.23,
+     "outflow_usd": 105.62,
+     "balance_ratio": 0.02257,
+     "throughput_usd": 105.62
+    }
+   ]
+  }
+ ]
+}

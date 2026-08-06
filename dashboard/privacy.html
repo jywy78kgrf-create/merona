@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy — merona</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root{--bg:#f2eee8;--card:#fff;--ink:#241b31;--sub:#6d6479;--mute:#9a90a8;
+    --teal:#0f8d76;--teal2:#13a88c;--red:#c23a2b;--line:rgba(21,14,31,.09);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.62}
+  .wrap{max-width:760px;margin:0 auto;padding:34px 20px 70px}
+  header{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
+  .mark{width:40px;height:40px;border-radius:10px;flex:none}
+  h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+  .sub{width:100%;color:var(--sub);font-size:13.5px;margin-top:2px}
+  .asof{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:7px;width:100%}
+  .tldr{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:15px 18px;margin:22px 0 0;box-shadow:0 2px 10px rgba(38,32,41,.06)}
+  .tldr .k{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--mute);
+    text-transform:uppercase;font-weight:600;margin-bottom:7px}
+  .tldr ul{margin:0;padding-left:18px}
+  .tldr li{margin:5px 0;font-size:13.5px}
+  h2{font-size:15.5px;font-weight:600;margin:34px 0 9px;letter-spacing:.01em}
+  p{margin:0 0 12px;font-size:14px}
+  ul.body{padding-left:20px;margin:0 0 12px}
+  ul.body li{margin:6px 0;font-size:14px}
+  b{font-weight:600}
+  code{font-family:var(--mono);font-size:12.5px;background:rgba(21,14,31,.05);
+    padding:1px 5px;border-radius:4px}
+  a{color:var(--teal);text-decoration:none;border-bottom:1px solid rgba(15,141,118,.3)}
+  a:hover{border-bottom-color:var(--teal)}
+  .flag{border-left:2px solid var(--teal2);padding:2px 0 2px 15px;margin:16px 0;
+    color:var(--sub);font-size:13.5px}
+  footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--mute);line-height:1.7}
+  footer a{color:var(--sub);border-bottom-color:rgba(109,100,121,.3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#0d0b11"/><text x="38" y="66" font-family="sans-serif" font-weight="600" font-size="52" fill="#efe9e2" text-anchor="middle">m</text><rect x="66" y="56" width="11" height="11" rx="2.5" fill="#2fd6c3"/></svg>
+  <h1>Privacy</h1>
+  <div class="sub">What merona reads, what it records about you, and what you can ask us to do about it.</div>
+  <div class="asof">Version 1 &#183; 3 August 2026</div>
+</header>
+
+<div class="tldr">
+  <div class="k">The short version</div>
+  <ul>
+    <li>merona indexes <b>public blockchain data</b>. It does not collect data about you to build a profile of you.</li>
+    <li><b>No accounts, no signup, no tracking cookies, no advertising, no analytics trackers, no data sold or shared.</b></li>
+    <li>The free wallet check is <b>anonymous by design</b> &#8212; the thing you look up is stripped from our logs before they are written.</li>
+    <li>Wallet addresses can be personal data. We say so plainly below, and we tell you what to do if one of them is yours.</li>
+  </ul>
+</div>
+
+<h2>Who is responsible</h2>
+<p>merona is operated by a single independent operator. Contact for anything on this
+page, including data-protection requests:
+<a href="mailto:hello@merona.io">hello@merona.io</a>. Requests are answered by a
+human, normally within a few days and always within one month.</p>
+
+<h2>What merona reads</h2>
+<ul class="body">
+  <li><b>Public blockchain records.</b> Settlement transactions on six chains &#8212; sender
+  and recipient addresses, amounts, timestamps, transaction hashes. This data is
+  already public and permanent on those chains; merona reads it, it does not create
+  it and cannot alter or remove it there.</li>
+  <li><b>Public endpoint catalogs and the endpoints themselves.</b> Directory listings of
+  x402 services, plus a nightly probe of each listed endpoint that records the payout
+  address it advertises and the one it actually asks for.</li>
+</ul>
+<p>Both sources are public. merona does not buy data, scrape private systems, or receive
+data from third parties about individuals.</p>
+
+<h2>Wallet addresses and personal data</h2>
+<p>A wallet address is a pseudonym, not a name. But European regulators have been clear
+that on-chain identifiers <b>can be personal data</b> where they allow a natural person
+to be identified indirectly &#8212; the EDPB confirmed this in its blockchain guidelines
+adopted in July 2026. We do not pretend otherwise.</p>
+<p>Most addresses merona publishes belong to services, relayers and companies. Some may
+belong to individuals. Where an address relates to an identifiable person, our
+processing of it is subject to the GDPR, and the rights set out below apply to it.</p>
+<div class="flag">merona does not attempt to link addresses to real-world identities. We
+do not run deanonymisation, clustering-to-identity, or identity-resolution of any kind.
+Where a name appears alongside an address, it is because the operator published that
+link themselves &#8212; in a public catalog, a registry entry, or a self-declaration to
+us.</div>
+
+<h2>Why we are allowed to publish it</h2>
+<p>Our lawful basis is <b>legitimate interests</b> (Article 6(1)(f) GDPR): making the
+payment integrity of a public financial rail verifiable, so that a party about to send
+funds can check where those funds actually go, and so that manufactured volume is not
+mistaken for real commerce.</p>
+<p>We have weighed that against the interests of the people whose addresses appear.
+Points that matter in the balance: the underlying data is already public and permanent;
+we publish <b>recorded facts</b> (what an endpoint advertised, what it asked for, what
+settled on chain) rather than allegations about people; we do not attach identities; the
+information concerns commercial conduct on a public rail rather than private life; and
+anyone affected can object using the process below.</p>
+
+<h2>What our servers record about visitors</h2>
+<ul class="body">
+  <li><b>Web server logs.</b> IP address, timestamp, requested path, response code and
+  user agent &#8212; the ordinary record any web server keeps, retained for security and
+  abuse investigation and then rotated out.</li>
+  <li><b>The free check is exempt from that by design.</b> For <code>/check</code> and
+  <code>/probe</code>, the <code>q=</code> parameter is deleted before the log line is
+  written. <b>What you looked up never lands on disk.</b> We cannot tell you which
+  wallets have been checked, because we do not know.</li>
+  <li><b>Aggregate usage counters.</b> A count of requests per route per day. Route and
+  date only &#8212; no IP, no identifier, nothing that could distinguish one visitor from
+  another. Kept for 30 days.</li>
+  <li><b>API request records.</b> For the paid API, we log the calling identity (API key
+  name, x402 payer address, or IP for unauthenticated calls), the path and the status
+  code, so that rate limits and billing are auditable. Paths are truncated and rotated.</li>
+  <li><b>No cookies are set. No third-party scripts, fonts, tag managers, pixels or
+  analytics services are loaded on any merona page.</b></li>
+</ul>
+
+<h2>Payments</h2>
+<p>Paid API calls are settled in USDC over the x402 protocol. Settlement happens on a
+public blockchain through a third-party facilitator; the transaction and the paying
+address are public on chain by the nature of that rail. We record the payer address and
+the transaction reference against the call. <b>We never see or hold card details, bank
+details or any custodial funds, and there is no account to create.</b></p>
+
+<h2>Retention, and an honest word about permanence</h2>
+<p>merona's published figures rest on nightly snapshots that are committed immutably, so
+that any number we publish can be re-derived by anyone, later, without trusting us. That
+auditability is the product. It also means our historical record is append-only by
+design.</p>
+<p>In practice: we can remove an address from the live feed, the published flags and the
+scoring surface, and we will. We cannot rewrite past immutable snapshots, and nobody can
+remove anything from the underlying blockchains &#8212; that is a property of those
+chains, not a choice we made. If you exercise a right below, we will tell you exactly
+what we removed and what we could not, rather than implying more than we can deliver.</p>
+
+<h2>Your rights</h2>
+<p>If you are in the EU, EEA or UK, you have the right to access the data we hold about
+you, to have inaccurate data corrected, to have data erased, to restrict or object to
+processing, and to lodge a complaint with your national data-protection authority.</p>
+<p>Because we do not hold identities, we cannot look you up by name. To make a request
+about an address, write to <a href="mailto:hello@merona.io">hello@merona.io</a> and show
+control of it &#8212; a signed message from that address is the cleanest proof, and it
+is the same mechanism used for relayer self-declaration.</p>
+<p><b>Objections are taken seriously and answered substantively.</b> If you believe a
+figure or a flag concerning you is wrong, say so with the reasoning: we recompute, and
+where we were wrong we correct the record publicly rather than quietly. Corrections are
+published, not buried &#8212; that policy predates this page and applies to everyone,
+including us.</p>
+
+<h2>Where the data is</h2>
+<p>merona runs on a single dedicated server in the European Union (Germany), fronted by
+a content-delivery network for TLS and abuse protection. Email is handled by a standard
+mail provider. We do not transfer personal data to third parties for their own purposes,
+and we do not sell data under any circumstances.</p>
+
+<h2>Children</h2>
+<p>merona is a technical service for developers and operators of automated payment
+systems. It is not directed at children and we do not knowingly process children's data.</p>
+
+<h2>Changes</h2>
+<p>If this notice changes materially, the version and date at the top change with it and
+the previous version stays available in our public repository &#8212; the same way our
+data does.</p>
+
+<footer>
+  <a href="/">merona.io</a> &#183; <a href="/editorial">Editorial responsibility</a>
+  &#183; <a href="/mismatches">payTo mismatch feed</a>
+  &#183; <a href="https://github.com/jywy78kgrf-create/merona">Methodology</a>
+  &#183; <a href="mailto:hello@merona.io">hello@merona.io</a><br>
+  merona publishes recorded facts from public chain data and nightly probes. They are
+  signals, not guarantees of any seller's performance, and not financial advice.
+</footer>
+</div>
+</body>
+</html>

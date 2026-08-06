@@ -1,0 +1,33 @@
+seller,reason,evidence,clean_exclude
+0x66fa4d79ca84016b42352be33c908dd812952ec8,3-hop payment ring (hub: lnpay/aisa listings),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x897720c5b19f93f3194990d0121d3a64783bbab8,3-hop payment ring (leg 2 origin; sole payer of 30-wallet cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x52e6d9b8fd9f3cd60f6e92f0750ee1dd43a62260,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x474bedc39654bb55e84ec6701011a2f618e7849f,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x47fe1c4272e7bb0c538dc9f0eea41404eef39e6f,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xa697afe359defc010857e173e7021407ff92b2bf,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xc99fe62d1972ca01304b173d5caa602721363d10,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x59a35233502dfd65f02c8b09f988ffdfc2bc64c4,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x38329f3eb15ba1d11190305633f8c7a9fb156b43,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x1f93d79a6884efee10bb49a06277a3a95e802f00,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x3863f3611ff0cf23af3983266a8f950610436c2b,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x480b5a88239fc88a8369e9a5448bd5e095bef121,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x535cb97ea531d75a6d2251ee10b5909aa2b6ca12,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x002d0d2f9b54c9f5ba4cbd11e422bfcee2aede4d,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x00572b71ff076e3ca723488fa29ec5f85ec6c34a,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x04dca2b22d94bf2dc75274cea30979be01af6e77,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x0b797ccb54574ed07d84597761500e1d1d8db32e,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x1e4b5cd7a158be252abddd647d0cbc8fce790654,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x21bded8d7b0cfc3cc71ed6a8ee1daae64bfc3f18,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x27f1ca0cf425f3a64dd6d7a95f75f8f5907bf72f,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x2d5de05b890db6c661c5c992d042606994a30042,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x2eef36bd4ef5c6520b520e407eb8acd9e56881f5,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x3000c7b212974e3479f608fb2d7d9788b3126dec,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x76d5d847b2df928a842b47794a7943c3dfc434a1,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x7b3fe9333e0186b3998805d1408665284b0bb11e,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x7fd421c6d200279a9935200a9c4b6249ff5ff260,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0x96c44eb92ac1eba7c920587a609c47fa270959c3,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xc2f04240aecf3c6ae75f2378b13d9713de29f18a,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xd997f7e75ec1b12911b4fae90a0dbb1cfbca66cb,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xe1ec023f5c95d4244803aa2acd661fca06b67a75,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xf133924cd7b8e940b5df95f3a29385898716bc27,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1
+0xf5ddb8cc86bd4551be3d2268aa6e18b2d0c659b7,3-hop payment ring (uniform-$20 cluster),docs/report/polygon_attribution_draft.md 2026-07-31,1

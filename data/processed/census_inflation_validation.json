@@ -1,0 +1,48 @@
+{
+  "generated": "2026-07-03T06:58:19.936339+00:00",
+  "finding": "x402scan public.sellers.all.list multiplies tx_count, total_amount and unique_buyers by the seller's facilitator count (LATERAL unnest before SUM in apps/scan/src/services/transfers/sellers/list-mv.ts).",
+  "validation_ratio_census_over_pulled_by_facilitator_count": {
+    "1": {
+      "1.0": 2541,
+      "0.99": 53,
+      "0.98": 38,
+      "0.97": 23,
+      "0.95": 20,
+      "0.96": 20
+    },
+    "2": {
+      "2.0": 214,
+      "1.99": 11,
+      "1.96": 5,
+      "1.98": 4,
+      "1.92": 2,
+      "1.93": 2
+    },
+    "3": {
+      "3.0": 44,
+      "2.94": 1,
+      "2.99": 1,
+      "2.65": 1
+    },
+    "4": {
+      "4.0": 53,
+      "4.27": 1
+    },
+    "5": {
+      "5.0": 3
+    },
+    "6": {
+      "6.0": 1
+    },
+    "7": {
+      "7.0": 1
+    },
+    "8": {
+      "8.0": 1
+    }
+  },
+  "raw_total_volume_base_units": 154801988963847.0,
+  "corrected_total_volume_base_units": 51901220401449.0,
+  "sellers_affected": 9900,
+  "caveat": "Division is exact per materialized-view row; only 2 multi-chain sellers could mix rows with different facilitator arrays."
+}

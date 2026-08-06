@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>payTo mismatch feed — merona</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root{--bg:#f2eee8;--card:#fff;--ink:#241b31;--sub:#6d6479;--mute:#9a90a8;
+    --teal:#0f8d76;--teal2:#13a88c;--red:#c23a2b;--line:rgba(21,14,31,.09);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:880px;margin:0 auto;padding:34px 20px 60px}
+  header{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
+  .mark{width:40px;height:40px;border-radius:10px;flex:none}
+  h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+  .badge{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--teal);
+    border:1.5px solid var(--teal2);border-radius:999px;padding:4px 11px;font-weight:600}
+  .sub{width:100%;color:var(--sub);font-size:13.5px;margin-top:2px}
+  .asof{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:6px}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:12px 16px;margin:20px 0 0;font-size:12.5px;color:var(--sub);
+    box-shadow:0 2px 10px rgba(38,32,41,.06)}
+  h2{font-size:15px;font-weight:600;letter-spacing:.01em;margin:30px 0 10px;
+    display:flex;align-items:baseline;gap:8px}
+  h2 .n{font-family:var(--mono);font-size:12px;color:var(--mute);font-weight:400}
+  .entry{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:14px 17px;margin-bottom:10px;box-shadow:0 2px 10px rgba(38,32,41,.06)}
+  .res{font-family:var(--mono);font-size:13px;font-weight:600;word-break:break-all}
+  .row{display:flex;gap:10px;align-items:baseline;margin-top:8px;flex-wrap:wrap}
+  .lab{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--mute);
+    text-transform:uppercase;width:104px;flex:none;font-weight:600}
+  .addr{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+  .addr.bad{color:var(--red)}
+  .oc{font-family:var(--mono);font-size:10px;border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .oc.yes{color:var(--teal);background:rgba(19,168,140,.09)}
+  .oc.no{color:var(--sub);background:rgba(21,14,31,.05)}
+  .dates{font-family:var(--mono);font-size:10px;color:var(--mute);margin-top:8px}
+  .tl{font-family:var(--mono);font-size:11px;color:var(--sub);margin-top:5px;line-height:1.7}
+  .tl b{color:var(--ink);font-weight:600}
+  .more{color:var(--mute);font-size:12px;font-family:var(--mono);margin:8px 0 0}
+  .devrow{margin-top:34px;background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:14px 17px;font-family:var(--mono);font-size:12px;box-shadow:0 2px 10px rgba(38,32,41,.06)}
+  .devrow .k{font-size:9px;letter-spacing:.16em;color:var(--mute);text-transform:uppercase;font-weight:600}
+  .devrow a{color:var(--teal);text-decoration:none;font-weight:500}
+  .devrow div{margin:6px 0}
+  footer{margin-top:26px;font-size:11px;color:var(--mute);line-height:1.6}
+  footer a{color:var(--sub)}
+  .err{padding:40px 0;text-align:center;color:var(--sub);font-family:var(--mono);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#0d0b11"/><text x="38" y="66" font-family="sans-serif" font-weight="600" font-size="52" fill="#efe9e2" text-anchor="middle">m</text><rect x="66" y="56" width="11" height="11" rx="2.5" fill="#2fd6c3"/></svg>
+  <h1>payTo mismatch feed</h1>
+  <span class="badge">FREE · NO KEY · NO SIGNUP</span>
+  <div class="sub">The payout wallet an endpoint <b>advertises</b> vs what it <b>actually asks for</b> — every listed x402 endpoint, probed nightly, with each wallet's real on-chain settlement record attached.</div>
+  <div class="asof" id="asof">loading…</div>
+</header>
+
+<div class="note" id="disclaimer"></div>
+
+<h2>Catalog vs live <span class="n" id="n-cvl"></span></h2>
+<div id="cvl"></div>
+
+<h2>Payout-address rotations <span class="n" id="n-rot"></span></h2>
+<div id="rot"></div>
+<div class="more" id="rot-more"></div>
+
+<div class="devrow">
+  <div class="k">For agents &amp; builders</div>
+  <div>bulk JSON&nbsp;· <a href="/mismatches.json">merona.io/mismatches.json</a></div>
+  <div>one-shot&nbsp;· <a href="/check?q=x402.browserbase.com">merona.io/check?q=</a><span style="color:var(--mute)">wallet or url</span></div>
+  <div>per-wallet trust grades (paid)&nbsp;· <a href="https://api.merona.io">api.merona.io</a></div>
+</div>
+
+<footer id="foot"><a href="/">&larr; merona.io — the x402 settlement index</a></footer>
+</div>
+
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const oc=(v)=>v===true?'<span class="oc yes">&#10003; seen on-chain</span>'
+    :v===false?'<span class="oc no">never seen on-chain</span>':'';
+  fetch('/mismatches.json',{cache:'no-store'}).then(r=>{
+    if(!r.ok) throw 0; return r.json();
+  }).then(d=>{
+    const m=d.meta||{}, ao=m.as_of||{};
+    $('asof').textContent='catalog as of '+(ao.catalog||'—')+' · live probe '+(ao.live_probe||'—')+' · updated nightly';
+    $('disclaimer').textContent=m.disclaimer||'';
+    const cvl=d.catalog_vs_live||[];
+    $('n-cvl').textContent=cvl.length+' current';
+    $('cvl').innerHTML=cvl.length?cvl.map(e=>'<div class="entry">'
+      +'<div class="res">'+esc(e.resource)+'</div>'
+      +'<div class="row"><span class="lab">Catalog lists</span><span class="addr">'+esc(e.advertised_payto)+'</span> '+oc(e.advertised_seen_onchain)+'</div>'
+      +(e.live_paytos||[]).map(p=>'<div class="row"><span class="lab">Live 402 asks</span><span class="addr bad">'+esc(p)+'</span> '+oc((e.live_seen_onchain||{})[p])+'</div>').join('')
+      +'<div class="dates">catalog '+esc(e.catalog_date)+' · probe '+esc(e.probe_date)+'</div>'
+      +'</div>').join('')
+      :'<div class="entry" style="color:var(--sub)">No catalog-vs-live mismatches in the current window.</div>';
+    const rot=d.payto_rotation||[];
+    $('n-rot').textContent=(m.counts&&m.counts.payto_rotation||rot.length)+' listings with payout changes on record';
+    const show=rot.slice(0,40);
+    $('rot').innerHTML=show.map(e=>'<div class="entry">'
+      +'<div class="res">'+esc(e.resource)+'</div>'
+      +'<div class="tl">'+(e.timeline||[]).map(t=>'<b>'+esc(t.payto.slice(0,10))+'&#8230;</b> '
+        +esc(t.first_seen)+(t.first_seen!==t.last_seen?' &rarr; '+esc(t.last_seen):'')
+        +(t.seen_onchain===true?' &#183; on-chain':'')).join('&nbsp;&nbsp;&#183;&nbsp;&nbsp;')+'</div>'
+      +'</div>').join('');
+    if(rot.length>show.length) $('rot-more').textContent='+ '+(rot.length-show.length)+' more in the raw feed';
+  }).catch(()=>{
+    $('asof').textContent='';
+    $('cvl').innerHTML='<div class="err">Feed not generated yet — first nightly run pending. The raw endpoint is /mismatches.json.</div>';
+  });
+})();
+</script>
+</body>
+</html>

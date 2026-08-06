@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Editorial responsibility — merona</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root{--bg:#f2eee8;--card:#fff;--ink:#241b31;--sub:#6d6479;--mute:#9a90a8;
+    --teal:#0f8d76;--teal2:#13a88c;--red:#c23a2b;--line:rgba(21,14,31,.09);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.62}
+  .wrap{max-width:760px;margin:0 auto;padding:34px 20px 70px}
+  header{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
+  .mark{width:40px;height:40px;border-radius:10px;flex:none}
+  h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+  .sub{width:100%;color:var(--sub);font-size:13.5px;margin-top:2px}
+  .asof{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:7px;width:100%}
+  .tldr{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:15px 18px;margin:22px 0 0;box-shadow:0 2px 10px rgba(38,32,41,.06)}
+  .tldr .k{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--mute);
+    text-transform:uppercase;font-weight:600;margin-bottom:7px}
+  .tldr p{margin:0;font-size:13.5px}
+  h2{font-size:15.5px;font-weight:600;margin:34px 0 9px;letter-spacing:.01em}
+  p{margin:0 0 12px;font-size:14px}
+  ul.body{padding-left:20px;margin:0 0 12px}
+  ul.body li{margin:6px 0;font-size:14px}
+  b{font-weight:600}
+  code{font-family:var(--mono);font-size:12.5px;background:rgba(21,14,31,.05);
+    padding:1px 5px;border-radius:4px}
+  a{color:var(--teal);text-decoration:none;border-bottom:1px solid rgba(15,141,118,.3)}
+  a:hover{border-bottom-color:var(--teal)}
+  .flag{border-left:2px solid var(--teal2);padding:2px 0 2px 15px;margin:16px 0;
+    color:var(--sub);font-size:13.5px}
+  .who{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:14px 18px;margin:0 0 12px;box-shadow:0 2px 10px rgba(38,32,41,.06);
+    font-family:var(--mono);font-size:12.5px;line-height:1.9}
+  .who .k{font-size:9px;letter-spacing:.16em;color:var(--mute);text-transform:uppercase;
+    font-weight:600;display:inline-block;min-width:180px}
+  footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--mute);line-height:1.7}
+  footer a{color:var(--sub);border-bottom-color:rgba(109,100,121,.3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#0d0b11"/><text x="38" y="66" font-family="sans-serif" font-weight="600" font-size="52" fill="#efe9e2" text-anchor="middle">m</text><rect x="66" y="56" width="11" height="11" rx="2.5" fill="#2fd6c3"/></svg>
+  <h1>Editorial responsibility</h1>
+  <div class="sub">Who stands behind the numbers, how they are produced, and where a machine is and is not involved.</div>
+  <div class="asof">Version 1 &#183; 3 August 2026</div>
+</header>
+
+<div class="tldr">
+  <div class="k">The short version</div>
+  <p>Every figure merona publishes is computed by deterministic code from immutable
+  public snapshots &#8212; not estimated, not modelled, not generated. Everything
+  written <i>about</i> those figures is reviewed and approved by a named human before
+  publication, and that human is accountable for it.</p>
+</div>
+
+<h2>Who holds it</h2>
+<div class="who">
+  <span class="k">Editorial responsibility</span> YOUR NAME<br>
+  <span class="k">Role</span> Operator &#183; sole editor<br>
+  <span class="k">Reachable at</span> <a href="mailto:hello@merona.io">hello@merona.io</a><br>
+  <span class="k">Applies to</span> merona.io &#183; api.merona.io &#183; published reports
+</div>
+<p>One person approves, alters or rejects everything published under the merona name,
+and holds ultimate responsibility for it. There is no editorial committee and no
+anonymous byline. If something published here is wrong, there is a specific person to
+hold to it.</p>
+
+<h2>How the figures are produced</h2>
+<p>merona's numbers are not opinions and not predictions. They come out of a fixed
+pipeline:</p>
+<ul class="body">
+  <li>Settlement records are read directly from six public blockchains and written to a
+  dated snapshot.</li>
+  <li>Scoping, wash detection and cycle detection run as <b>deterministic algorithms</b>
+  over that snapshot &#8212; graph decomposition and arithmetic thresholds, published in
+  full. The same snapshot always yields the same answer, for us and for you.</li>
+  <li>Each published figure carries the SHA-256 of the snapshot it came from, so it can
+  be re-derived independently, later, without trusting us.</li>
+</ul>
+<div class="flag">No figure on this site is produced by a language model, a statistical
+estimate, a projection or a generative system of any kind. If a number cannot be derived
+from a snapshot, it does not get published. Where we do not know something, we publish
+<code>UNKNOWN</code> rather than inventing a value &#8212; that rule is enforced in the
+scoring code itself, not just in policy.</div>
+
+<h2>Where a machine assists, and where it does not</h2>
+<p>We use AI coding assistants to help write and review software, and to help draft prose
+&#8212; documentation, methodology write-ups, report narrative and site copy. We think
+saying so is more useful than pretending otherwise. What matters is the boundary:</p>
+<ul class="body">
+  <li><b>Never used to produce data.</b> No figure, score, grade, flag or feed entry is
+  generated, estimated or filled in by an AI system. Those come from the deterministic
+  pipeline above, or they do not exist.</li>
+  <li><b>Never published unreviewed.</b> Drafted prose is read line by line, checked
+  against the underlying data, edited or rejected, and approved by the person named above
+  before it goes out. That review is substantive &#8212; claims get cut when the data
+  does not support them, and figures in prose get traced back to the snapshot that
+  produced them.</li>
+  <li><b>Corrections outrank convenience.</b> When review catches an error after
+  publication, the correction is published in place, dated, with what changed and why.</li>
+</ul>
+
+<h2>Corrections</h2>
+<p>Corrections are <b>published, not buried</b>. When a figure is withdrawn or restated,
+the original stays visible alongside the correction and the reasoning, because a
+measurement service that quietly edits its history is worth nothing. We have done this to
+our own headline numbers &#8212; a chain-level clean figure published on 30 July 2026 was
+withdrawn the next day and restated after a payer-side trace showed our filters had missed
+a manufactured structure. That episode is documented in full in the public repository.</p>
+<p>If you think something here is wrong, write to
+<a href="mailto:hello@merona.io">hello@merona.io</a> with the reasoning. Substantive
+challenges get recomputed and answered. Corrections we accept get published under our own
+name, not attributed away.</p>
+
+<h2>What we do not do</h2>
+<ul class="body">
+  <li>We do not publish figures we cannot re-derive.</li>
+  <li>We do not present flags as accusations. A flag records what the data shows &#8212;
+  a cycle, a mismatch, a rotation &#8212; not a conclusion about anyone's intent.</li>
+  <li>We do not accept payment to change, suppress or improve a score, and there is no
+  mechanism by which that could happen: scores are a function of the snapshot.</li>
+  <li>We do not use synthetic or generated media to represent real people or events.</li>
+</ul>
+
+<footer>
+  <a href="/">merona.io</a> &#183; <a href="/privacy">Privacy</a>
+  &#183; <a href="/mismatches">payTo mismatch feed</a>
+  &#183; <a href="https://github.com/jywy78kgrf-create/merona">Methodology</a>
+  &#183; <a href="mailto:hello@merona.io">hello@merona.io</a><br>
+  merona publishes recorded facts from public chain data and nightly probes. They are
+  signals, not guarantees of any seller's performance, and not financial advice.
+</footer>
+</div>
+</body>
+</html>
