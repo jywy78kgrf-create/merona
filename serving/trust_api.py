@@ -474,7 +474,7 @@ font-size:19px;position:relative}
 .mark i{position:absolute;right:5px;bottom:5px;width:6px;height:6px;
 border-radius:2px;background:#0fa88c;font-style:normal}
 h1{font-size:19px;margin:0;font-weight:600}
-.tag{color:var(--sub);margin:0 0 30px}
+.tag{color:var(--sub);margin:0 0 18px}
 h2{font-size:11px;letter-spacing:.22em;text-transform:uppercase;
 color:var(--sub);margin:30px 0 10px;font-weight:600}
 .ep{display:flex;gap:14px;padding:7px 0;border-bottom:1px solid var(--line);
@@ -489,10 +489,18 @@ pre b{color:var(--teal);font-weight:500}
 a{color:var(--vio);text-decoration:none;border-bottom:1px solid rgba(169,138,224,.35)}
 .foot{margin-top:34px;color:var(--sub);font-size:11px;line-height:1.8}
 .mcp code{color:var(--vio)}
+nav.topnav{display:flex;gap:24px;flex-wrap:wrap;margin:0 0 30px;
+padding-bottom:14px;border-bottom:1px solid var(--line);font-size:10px;
+letter-spacing:.18em;text-transform:uppercase;font-weight:600}
+nav.topnav a{color:var(--sub);border-bottom:none}
+nav.topnav a:hover{color:var(--ink)}
+nav.topnav a.on{color:var(--teal)}
 </style></head><body><div class="wrap">
 <div class="brand"><div class="mark">m<i></i></div><h1>m.Score API</h1></div>
 <p class="tag">wash-aware trust scores for the x402 economy —
 <a href="https://merona.io">merona.io</a></p>
+
+<nav class="topnav" aria-label="site navigation"><a href="https://merona.io/">INDEX</a><a href="https://merona.io/mismatches">FREE CHECK</a><a href="https://merona.io/findings">FINDINGS</a><a class="on" href="/">API</a></nav>
 
 <h2>Scores — $0.005/call via x402, or an API key</h2>
 <div class="ep"><code>GET /v1/trust/{chain}/{address}</code><span>seller trust score (0&#8211;100, A&#8211;F)</span><span class="paid">paid</span></div>

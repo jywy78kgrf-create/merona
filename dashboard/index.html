@@ -66,12 +66,13 @@
     background:#fff; color:var(--ink); font-family:var(--mono); font-size:10.5px;
     box-shadow:0 2px 10px rgba(38,32,41,.10), 0 1px 2px rgba(38,32,41,.08); white-space:nowrap}
   .chip .ok{color:#1d8a5e; font-weight:500}
-  .hnav{display:flex; align-items:center; gap:clamp(16px,2.2vw,30px);
-    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.15em}
+  .hnav{display:flex; align-items:baseline; gap:clamp(16px,2.2vw,30px);
+    align-self:flex-start; margin-top:18px;   /* baseline of the x402-settlement-index line */
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.2em}
   .hnav a{color:var(--sub); text-decoration:none}
   .hnav a:hover{color:var(--ink)}
   .hnav a.on{color:var(--teal)}
-  @media(max-width:1240px){.hnav{display:none}}
+  @media(max-width:1365px){.hnav{display:none}}
   .dot{width:6px;height:6px;border-radius:50%;flex:none}
   .dot.good{background:#2aa06c} .dot.warn{background:#d99a2b} .dot.crit{background:#c94f3d}
 
