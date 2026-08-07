@@ -86,11 +86,22 @@ def _load_keys() -> dict:
             keys[k.strip()] = name.strip() or k[:8]
     path = os.environ.get("TRUST_API_KEYS_FILE")
     if path and Path(path).exists():
-        for ln in Path(path).read_text().splitlines():
-            ln = ln.strip()
-            if ln and not ln.startswith("#"):
-                k, _, name = ln.partition(",")
-                keys[k.strip()] = name.strip() or k[:8]
+        # An unreadable/malformed keys file must not take the service down:
+        # this runs at import, and the free tools + the x402 payment lane do
+        # not depend on keys at all. Fail loud in the journal, run degraded.
+        # (Learned live 2026-08-06: a root-owned 600 file under User=x402
+        #  crashed the whole API on restart.)
+        try:
+            for ln in Path(path).read_text().splitlines():
+                ln = ln.strip()
+                if ln and not ln.startswith("#"):
+                    k, _, name = ln.partition(",")
+                    keys[k.strip()] = name.strip() or k[:8]
+        except OSError as e:
+            print(f"[trust-api] WARNING: cannot read TRUST_API_KEYS_FILE "
+                  f"{path!r} ({e}) — starting WITHOUT file keys; api_key "
+                  f"auth will fail until this is fixed", file=sys.stderr,
+                  flush=True)
     return keys
 
 
@@ -350,6 +361,74 @@ def _adverse_findings() -> dict:
     return _adverse
 
 
+ACTION_RULE_VERSION = 1
+
+
+def _suggested_action(resp: dict) -> dict:
+    """Map the evidence already in `resp` to an action, deterministically.
+
+    This is advice to the caller about the caller's own funds — never a claim
+    about the seller. That distinction is what keeps it inside the published
+    editorial policy ("we do not present flags as accusations"), and it is why
+    the strongest negative value is DECLINE rather than a verdict of guilt.
+
+    The rule version and every reason that fired travel with the answer, so a
+    caller can re-derive the decision from the same response, disagree with a
+    threshold, or ignore this field entirely and use the grade directly.
+
+    INSUFFICIENT_EVIDENCE is a first-class answer: an address we have not
+    observed long enough is not an address we are calling bad. Collapsing
+    "no data" into "unsafe" is the standard failure of this genre and it
+    punishes every honest newcomer.
+    """
+    grade = str(resp.get("grade") or "").upper()
+    prov = bool(resp.get("provisional"))
+    wash = (resp.get("components") or {}).get("wash") or {}
+    flags = [k for k in ("cycle_flag", "history_flag", "nightly_flag")
+             if wash.get(k)]
+    adverse = bool(resp.get("adverse_findings"))
+    unscored = resp.get("score") is None and not adverse
+    # scores v4: a clean seller below the letter gate has a score but no
+    # letter — unrated, which is INSUFFICIENT_EVIDENCE with a truthful reason
+    unrated = (not unscored and not adverse
+               and grade in ("", "UNKNOWN", "NONE"))
+    reasons = []
+    if adverse:
+        reasons.append("hand-verified adverse finding on record")
+    if flags:
+        reasons.append("wash signals: " + ", ".join(flags))
+    if unrated:
+        reasons.append("unrated — evidence base below the letter-publication "
+                       "gate; the score is computed but no letter is claimed")
+    elif unscored or grade in ("", "UNKNOWN"):
+        reasons.append("no score for this address in the witnessed index")
+    else:
+        reasons.append(f"grade {grade}")
+    if prov:
+        reasons.append("provisional — observation window still short")
+
+    if adverse:
+        action = "DECLINE"
+    elif unscored or grade in ("", "UNKNOWN"):
+        action = "INSUFFICIENT_EVIDENCE"
+    elif grade in ("D", "F") and not prov:
+        action = "DECLINE"
+    elif flags or grade in ("D", "F"):
+        # a provisional D/F is too thin to decline on but too poor to wave
+        # through as ordinary caution — send the caller to look at the evidence
+        action = "INVESTIGATE"
+    elif prov or grade == "C":
+        action = "CAUTION"
+    else:
+        action = "PROCEED"
+    return {"action": action,
+            "rule_version": ACTION_RULE_VERSION,
+            "because": reasons,
+            "note": "Suggested action for the caller's own funds, derived by "
+                    "a published deterministic rule from the evidence in this "
+                    "response. Not a claim about the seller."}
+
+
 def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
     if not _CHAIN.match(chain):
         return 400, {"error": "bad chain"}
@@ -369,14 +448,19 @@ def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
         # seller universe, so mrdn 404s on the normal path — the finding is the
         # whole answer here).
         if finding:
-            return 200, {
-                "chain": chain, "seller": address,
-                "score": None, "grade": finding.get("grade_override", "F"),
-                "status": "adverse_finding", "measured_date": None,
-                "adverse_findings": [finding]}
+            out = {"chain": chain, "seller": address,
+                   "score": None, "grade": finding.get("grade_override", "F"),
+                   "status": "adverse_finding", "measured_date": None,
+                   "adverse_findings": [finding]}
+            out["suggested_action"] = _suggested_action(out)
+            return 200, out
+        # The 404 carries an action too: an agent asking "should I pay this?"
+        # needs "we have no record" to be distinguishable from "we have bad
+        # news", and it is the same field either way.
         return 404, {"error": "unknown seller",
                      "detail": "no settlements observed for this address on "
-                               "this chain in the witnessed index"}
+                               "this chain in the witnessed index",
+                     "suggested_action": _suggested_action({})}
     (mdate, score, grade, prov, snap, tx, payers, spr, listed, comp,
      ver) = rows[0]
     try:
@@ -399,6 +483,16 @@ def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
         resp["score"] = None
         resp["status"] = "adverse_finding"
         resp["adverse_findings"] = [finding]
+    # evidence tier, mirroring endpoint grades: no letter = unrated (scores
+    # v4 letter gate), else provisional/verified by observation maturity
+    if resp.get("grade") is None and not finding:
+        resp["tier"] = "unrated"
+        resp["note"] = ("score computed but no letter published: evidence "
+                        "base is below the letter gate (settlements or "
+                        "distinct payers). Not an adverse signal.")
+    else:
+        resp["tier"] = "provisional" if resp.get("provisional") else "verified"
+    resp["suggested_action"] = _suggested_action(resp)
     return 200, resp
 
 
@@ -522,8 +616,11 @@ nav.topnav a.on{color:var(--teal)}
 <div class="ep"><code>merona.io/mismatches.json</code><span>bulk feed · <a href="https://merona.io/mismatches">human view</a></span></div>
 
 <p class="foot">Every score carries the snapshot sha256 + public anchor so it
-can be independently re-derived. Agents: this same URL returns JSON unless the
-request asks for text/html.</p>
+can be independently re-derived. Snapshot hashes are attested nightly on Base
+by merona's attester
+<a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5">0x6446&#8230;e6d5</a>
+— only attestations from that address are merona's. Agents: this same URL
+returns JSON unless the request asks for text/html.</p>
 </div></body></html>"""
 
 
@@ -615,6 +712,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, INDEX)
         if path == "/mcp.json":
             return self._send(200, MCP_MANIFEST)
+        if path == "/.well-known/glama.json":
+            # Directory ownership proof: Glama treats control of this path as
+            # proof that whoever holds GLAMA_MAINTAINER_EMAIL runs the server.
+            # Public contact address only — never a key, never a token.
+            return self._send(200, GLAMA_WELL_KNOWN)
 
         ident, ok = self._identity()
         # Rate-limit EVERY request (including unauthenticated 401s) BEFORE any
@@ -742,6 +844,14 @@ class Handler(BaseHTTPRequestHandler):
                       "serverInfo": {"name": "merona-mcp", "version": "1.0"}}
         elif method == "tools/list":
             result = {"tools": MCP_TOOLS}
+        elif method in ("resources/list", "resources/templates/list"):
+            # We serve tools only, and say so in `capabilities`. Directory
+            # scanners probe these anyway; -32601 is a legal answer but reads
+            # as a failure in their logs, so answer empty instead of erroring.
+            result = {"resources": []} if method == "resources/list" else \
+                {"resourceTemplates": []}
+        elif method == "prompts/list":
+            result = {"prompts": []}
         elif method == "tools/call":
             params = msg.get("params") or {}
             name = str(params.get("name") or "")
@@ -776,40 +886,72 @@ class Handler(BaseHTTPRequestHandler):
 MCP_PROTOCOL = "2025-03-26"
 MCP_TOOLS = [
     {"name": "payto_check",
-     "description": "FREE — payTo-integrity lookup for a wallet address or "
-                    "endpoint URL: catalog-vs-live payout mismatches and "
-                    "payout-rotation history, with on-chain settlement "
-                    "presence. Recorded facts with dates, not accusations; "
-                    "absence of a record is not a clearance.",
+     "description": "Check whether an x402 endpoint or wallet pays out where "
+                    "it claims to, before your agent sends funds. Takes one "
+                    "wallet address or endpoint URL. Returns any "
+                    "catalog-vs-live payout mismatch, dated payout-rotation "
+                    "history, and whether the address has settled on chain. "
+                    "Free, no key. Use mismatch_feed instead to list every "
+                    "known mismatch. Records are dated facts, not "
+                    "accusations, and no record found is not a clearance.",
      "inputSchema": {"type": "object", "required": ["query"],
-                     "properties": {"query": {"type": "string",
-                                              "maxLength": 256}}}},
+                     "properties": {"query": {
+                         "type": "string", "maxLength": 256,
+                         "description": "Wallet address (0x… or base58) or "
+                                        "endpoint URL/hostname to look up."}}}},
     {"name": "mismatch_feed",
-     "description": "FREE — summary of the nightly payTo mismatch feed: "
-                    "counts, as-of dates, current catalog-vs-live entries.",
+     "description": "List every x402 endpoint currently advertising one "
+                    "payout address while asking payers for another, from "
+                    "merona's nightly probe of the public catalog. Returns "
+                    "the current entries with advertised vs live addresses, "
+                    "counts and as-of dates. Takes no arguments. Free, no "
+                    "key. Use payto_check instead when you already have a "
+                    "specific address or endpoint to check.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "clean_stats",
-     "description": "FREE — latest wash-adjusted clean x402 settlement "
-                    "figures per chain (the numbers behind merona.io).",
+     "description": "Get wash-adjusted x402 settlement volume per chain — "
+                    "spend that survives removal of funded loops and "
+                    "self-dealing cycles, which can differ from raw transfer "
+                    "totals by orders of magnitude. Returns clean settlement "
+                    "count, clean volume in USD and an as-of date per chain. "
+                    "Takes no arguments. Free, no key. These are the figures "
+                    "published on merona.io.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "trust_score",
-     "description": f"PAID (${x402pay.PRICE_USD:g}/call via x402, or "
-                    "api_key) — wash-aware m.Score for a seller wallet: "
-                    "grade A-F, component breakdown, wash flags incl. "
-                    "cycle detection, snapshot sha for independent "
-                    "re-derivation. Pass payment=<base64 X-PAYMENT payload> "
-                    "to pay per call, or api_key=<key>.",
+     "description": "Score a specific seller wallet before paying it: "
+                    "wash-aware m.Score with an A–F grade, component "
+                    "breakdown, wash flags including multi-hop cycle "
+                    "detection, and the snapshot SHA so the result can be "
+                    "re-derived independently. Requires chain and address. "
+                    f"Paid, ${x402pay.PRICE_USD:g} per call: pass "
+                    "payment=<base64 X-PAYMENT payload> to pay via x402, or "
+                    "api_key=<key>. Called without either, it returns x402 "
+                    "payment instructions rather than an error.",
      "inputSchema": {"type": "object", "required": ["chain", "address"],
-                     "properties": {"chain": {"type": "string"},
-                                    "address": {"type": "string"},
-                                    "api_key": {"type": "string"},
-                                    "payment": {"type": "string"}}}},
+                     "properties": {
+                         "chain": {"type": "string",
+                                   "description": "Chain the seller settles "
+                                                  "on, e.g. base, polygon, "
+                                                  "solana."},
+                         "address": {"type": "string",
+                                     "description": "Seller wallet address "
+                                                    "to score."},
+                         "api_key": {"type": "string",
+                                     "description": "merona API key. "
+                                                    "Alternative to per-call "
+                                                    "x402 payment."},
+                         "payment": {"type": "string",
+                                     "description": "Base64 X-PAYMENT "
+                                                    "payload for a single "
+                                                    "x402 payment."}}}},
 ]
 MCP_MANIFEST = {
     "name": "merona-mcp",
-    "description": "merona — the x402 settlement index. Wash-aware trust "
-                   "data: payTo integrity checks (free) and m.Score seller "
-                   "grades (paid via x402 or API key).",
+    "description": "merona — the x402 settlement index. See what actually "
+                   "settles: wash-adjusted volume per chain after funded "
+                   "loops are removed, plus payTo payout-integrity checks. "
+                   "Three tools free with no key and no signup; m.Score "
+                   "seller grades paid via x402 or API key.",
     "endpoint": "/mcp",
     "transport": "streamable-http",
     "protocolVersion": MCP_PROTOCOL,
@@ -817,6 +959,21 @@ MCP_MANIFEST = {
               for t in MCP_TOOLS],
     "site": "https://merona.io",
     "free_feed": "https://merona.io/mismatches.json",
+}
+
+# Served at /.well-known/glama.json so the Glama directory listing can be
+# claimed. Glama matches this against the email on the Glama account, which
+# for a GitHub sign-in is whatever GitHub handed over — not necessarily the
+# published contact address. GLAMA_MAINTAINER_EMAIL takes a comma-separated
+# list so a second address can be added without a code change.
+# This file is world-readable and harvesters walk /.well-known/, so prefer
+# changing the directory account's email over publishing a personal one.
+GLAMA_MAINTAINER_EMAIL = os.environ.get("GLAMA_MAINTAINER_EMAIL",
+                                        "hello@merona.io")
+GLAMA_WELL_KNOWN = {
+    "$schema": "https://glama.ai/mcp/schemas/connector.json",
+    "maintainers": [{"email": e.strip()}
+                    for e in GLAMA_MAINTAINER_EMAIL.split(",") if e.strip()],
 }
 
 

@@ -46,6 +46,23 @@ FUNDED_THRESH = float(os.environ.get("WASH_FUNDED_THRESH", "0.20"))
 RPC_TIMEOUT = float(os.environ.get("WASH_RPC_TIMEOUT", "20"))
 WASH_CHAINS = ("base", "polygon")   # EVM lookback; Solana funding graph = v2
 _REGISTRY = Path(__file__).resolve().parent.parent / "data" / "indexer" / "relayer_registry.json"
+# merona's own payTo wallet(s): excluded from clean metrics as sellers exactly
+# like relayer addresses (attest/README.md policy #3). merona never generates
+# self-directed commerce, so these should never appear as sellers at all —
+# the exclusion guarantees that even a stray inbound settlement (someone
+# paying our x402 trust endpoint) can't put our own receipts inside the
+# clean numbers we publish. The address is public (it's the published payment
+# address); comma-separated env override for rotation.
+OWN_PAYTO = [a.strip().lower() for a in os.environ.get(
+    "X402_OWN_PAYTO",
+    "0x31ee6253e34df1ab3a45e00ffa9f5dc2be1040b6").split(",") if a.strip()]
+
+
+def _excluded_sellers(rel: list[str]) -> list[str]:
+    """Sellers structurally outside "merchant" scope: registry relayers (a
+    facilitator's own address receiving is fee/self-relay, not a sale) plus
+    merona's own payTo (our receipts are not evidence of the market)."""
+    return rel + [a for a in OWN_PAYTO if a not in rel]
 
 
 def _scoped_relayers(chain: str) -> list[str]:
@@ -284,9 +301,12 @@ def run_wash(store, date: str) -> None:
         # relayer addresses. A facilitator's own address is not a merchant; when
         # it receives, that's fee/self-relay, not agent-to-merchant commerce
         # (mrdn's address self-washed $142k and was 98.6% of the Base wash band).
+        # merona's own payTo is excluded on the same footing (_excluded_sellers).
+        exs = _excluded_sellers(rel)
+        xph = ",".join(["?"] * len(exs))
         scope = (f"chain=? AND facilitator IN ({rph}) AND block_number >= ? "
-                 f"AND seller NOT IN ({rph})")
-        sargs = (ch, *rel, wb, *rel)
+                 f"AND seller NOT IN ({xph})")
+        sargs = (ch, *rel, wb, *exs)
         rng = store.db.execute(store.q(
             f"SELECT MIN(block_number), MAX(block_number) FROM settlements "
             f"WHERE {scope}"), sargs).fetchone()
@@ -344,10 +364,13 @@ def run_wash(store, date: str) -> None:
                       f"skipped (not scopable)", file=sys.stderr)
                 continue
             rph = ",".join(["?"] * len(rel))
-            # merchants only — a relayer address receiving is not a merchant sale
+            # merchants only — a relayer address receiving is not a merchant
+            # sale, and merona's own payTo never counts toward its own numbers
+            exs = _excluded_sellers(rel)
+            xph = ",".join(["?"] * len(exs))
             scope = (f"chain=? AND facilitator IN ({rph}) AND block_number >= ? "
-                     f"AND seller NOT IN ({rph})")
-            sargs = (ch, *rel, wb, *rel)
+                     f"AND seller NOT IN ({xph})")
+            sargs = (ch, *rel, wb, *exs)
             total, vol = store.db.execute(store.q(
                 f"SELECT COUNT(*), COALESCE(SUM(amount),0) FROM settlements "
                 f"WHERE {scope}"), sargs).fetchone()
@@ -378,7 +401,8 @@ def run_wash(store, date: str) -> None:
                                  f"{len(rel)} relayers), witnessed regime "
                                  f"(block >= {wb}); funding lookback covers top "
                                  f"{TOP_SELLERS} scoped sellers by count; "
-                                 f"self-pay excluded globally"
+                                 f"self-pay excluded globally; own payTo "
+                                 f"excluded as seller (self-dealing guard)"
                                  + (f"; batch flags sha {batch_sha[ch]}"
                                     if ch in batch_sha else "")
                                  + cycle_note.get(ch, "")},

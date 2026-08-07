@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.merona/settlement-index",
   "title": "merona — x402 settlement index",
-  "description": "Wash-aware x402 trust: free payTo checks, mismatch feed, and paid seller trust scores.",
-  "version": "1.0.0",
+  "description": "See what actually settles on x402: wash-adjusted volume, payTo checks. Free, no key, no signup.",
+  "version": "1.0.1",
   "remotes": [
     {
       "type": "streamable-http",

@@ -49,6 +49,29 @@ SCORE_VERSION history:
           (settled, service-verified: data/processed/service_directory_v0
           .json). An A must mean verified commerce, not clean-looking flow;
           gated rows are capped at 89 with the reason recorded.
+  4 — the distribution-honesty version (2026-08-06). The 2026-08-06 audit
+      found 131,959 sellers graded F with exactly 201 of them carrying wash
+      evidence: the v3 rubric compresses clean sellers into a ~35-50 score
+      band while the letter map started C at 60, so 99.5% of the index wore
+      F for being small, the 201 real flags were indistinguishable from
+      newcomers, and no A had ever been earned (the bar sat 40 points above
+      the best clean score). Three changes, letters only — the numeric
+      score and its components are untouched and remain comparable across
+      versions:
+      (a) LETTER GATE — clean sellers below SELLER_LETTER_MIN_TX
+          settlements or SELLER_LETTER_MIN_PAYERS distinct payers publish
+          grade NULL ("unrated"), same maturation-reveals-the-letter design
+          as endpoint v4. Absence of history is not evidence of misconduct.
+      (b) CONDUCT ANCHORS — F and D are earned by observed conduct only,
+          and conduct letters IGNORE the gate (a wash-flagged wallet cannot
+          hide behind being small): live wash signal (cycle or funded-ratio
+          flag) or self-pay ≥ SELF_PAY_CONDUCT → F; history-flag-only
+          (past evidence, no live signal) → D.
+      (c) BANDS re-anchored to the observed clean distribution (p25 36 /
+          p50 41 / p90 49 at calibration): B ≥ 47, C ≥ 36, D below. A
+          requires score ≥ 55 AND census T2+ evidence — rare but now
+          actually reachable, where v3's A required a score the rubric
+          cannot produce. The ≥90 T2 cap from v3 is retained unchanged.
 """
 from __future__ import annotations
 
@@ -63,7 +86,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-SCORE_VERSION = 3
+SCORE_VERSION = 4
 ROOT = Path(__file__).resolve().parent.parent
 SNAP_DIR = ROOT / "data" / "indexer" / "snapshots"
 REGISTRY = ROOT / "data" / "indexer" / "relayer_registry.json"
@@ -88,7 +111,31 @@ def _relayer_addresses() -> dict:
         return {c: {a.lower() for a in v} for c, v in r.items()}
     except Exception:
         return {}
-WASH_FLAG_CAP = 49.0   # wash-flagged sellers grade D at best
+WASH_FLAG_CAP = 49.0   # wash-flagged sellers: numeric score capped (v2 rule)
+# --- seller letter gate + bands (v4) ------------------------------------------
+# A letter is a public claim; publishing one demands an evidence base. Clean
+# sellers below BOTH thresholds carry grade NULL ("unrated") — the score is
+# still computed and recorded, and crossing the gate reveals the letter, the
+# same maturation design as endpoint v4. Conduct letters ignore the gate.
+SELLER_LETTER_MIN_TX = int(os.environ.get("SELLER_LETTER_MIN_TX", "25"))
+SELLER_LETTER_MIN_PAYERS = int(os.environ.get("SELLER_LETTER_MIN_PAYERS", "5"))
+# self-pay share that is conduct in its own right, not just a point penalty
+SELF_PAY_CONDUCT = float(os.environ.get("SELLER_SELF_PAY_CONDUCT", "0.25"))
+# Bands anchored to the observed clean-seller distribution at calibration
+# (2026-08-06: p25 36 / p50 41 / p75 42 / p90 49 over 2,647 gated clean
+# sellers). v3's C-at-60 sat above a score the rubric essentially never
+# produces for clean flow, which is how 99.5% of the index came to wear F.
+SELLER_A_MIN = 55.0    # + census T2+ evidence required (see _seller_letter)
+SELLER_A_MIN_PAYERS = int(os.environ.get("SELLER_A_MIN_PAYERS", "50"))
+# v4.2 (2026-08-07): BlockRun audit — 10.07M settlements, 99.6% from ONE
+# payer, sailed past the payer floor with 1,100 nominal payers. A seller
+# whose volume is a single counterparty caps at B, share recorded.
+SELLER_A_MAX_TOP_SHARE = float(os.environ.get("SELLER_A_MAX_TOP_SHARE", "0.90"))
+# v4.1 (2026-08-07): first A cohort audit found A's resting on 6-9 lifetime
+# payers via endpoint/domain points. "A = verified commerce" must not be
+# earnable with six customers; below the payer floor the same seller is a B.
+SELLER_B_MIN = 47.0    # ≈ top decile of gated clean sellers
+SELLER_C_MIN = 36.0    # ≈ p25 — the broad clean middle grades C
 # grades stay 'provisional' until this many distinct observation days exist —
 # a young index must not hand out confident A's.
 MIN_MATURE_DAYS = int(os.environ.get("SCORE_MATURE_DAYS", "14"))
@@ -104,8 +151,44 @@ def _utcnow() -> str:
 
 
 def _grade(score: float) -> str:
+    """Endpoint letter map (uptime-style scores genuinely span 0-100)."""
     return ("A" if score >= 90 else "B" if score >= 75 else
             "C" if score >= 60 else "D" if score >= 40 else "F")
+
+
+def _seller_letter(score: float, tx: int, payers: int, self_ratio: float,
+                   nflag: bool, recip: bool, hflag: bool, cflag: bool,
+                   t2_ok: bool, top_share: float = 0.0
+                   ) -> tuple[str | None, str | None]:
+    """(letter | None, note). The v4 seller letter: conduct sinks, absence
+    caps, only conduct earns an F.
+
+    - F/D are earned by OBSERVED conduct only, and conduct ignores the
+      evidence gate — a wash-flagged wallet cannot hide behind being small.
+      Live signals (cycle, nightly funded-ratio, reciprocal pair) or extreme
+      self-pay → F; a history-only flag with no live signal → D.
+    - Clean sellers below the gate publish no letter at all (None =
+      "unrated"): absence of history is not evidence of misconduct, and an
+      F shared by 99.5% of the population stops nobody.
+    - Clean gated sellers band on the observed distribution; A additionally
+      requires census T2+ evidence — verified commerce, not clean-looking
+      flow.
+    """
+    if cflag or nflag or recip or self_ratio >= SELF_PAY_CONDUCT:
+        return "F", "conduct_live"
+    if hflag:
+        return "D", "conduct_history_only"
+    if tx < SELLER_LETTER_MIN_TX or payers < SELLER_LETTER_MIN_PAYERS:
+        return None, "unrated_below_letter_gate"
+    if score >= SELLER_A_MIN and t2_ok and payers >= SELLER_A_MIN_PAYERS:
+        if top_share >= SELLER_A_MAX_TOP_SHARE:
+            return "B", "concentration_capped"
+        return "A", None
+    if score >= SELLER_B_MIN:
+        return "B", None
+    if score >= SELLER_C_MIN:
+        return "C", None
+    return "D", "clean_bottom_band"
 
 
 # --- 1. endpoint reliability grades ------------------------------------------
@@ -426,13 +509,25 @@ def compute_seller_scores(store, date: str) -> int:
             # A-gate: a 90+ score must be backed by census T2+ evidence
             # (settled, service-verified origin). Clean-looking flow alone
             # stops at 89 — an A is a claim about verified commerce.
+            hosts = {o.split("://", 1)[-1] for o in origins}
+            t2_ok = any(census_tiers.get(h) in A_GATE_TIERS for h in hosts)
             a_gate = None
-            if score >= 90:
-                hosts = {o.split("://", 1)[-1] for o in origins}
-                if any(census_tiers.get(h) in A_GATE_TIERS for h in hosts):
+            if score >= 90:                    # v3 cap retained unchanged
+                if t2_ok:
                     a_gate = "T2+"
                 else:
                     score, a_gate = 89.0, "capped_no_T2_evidence"
+            top_tx = int(row.get("top_payer_tx") or 0)
+            top_share = (top_tx / tx) if tx and top_tx else 0.0
+            grade, letter_note = _seller_letter(
+                score, tx, payers, self_ratio, nflag, recip, hflag, cflag,
+                t2_ok, top_share)
+            if top_tx:
+                components_top = round(top_share, 4)
+            else:
+                components_top = None
+            if grade == "A" and a_gate is None:
+                a_gate = "T2+"                 # A below 90 still rests on T2
             components = {"diversity": round(breadth, 1),
                           "loyalty": round(loyalty, 1),
                           "scale": round(scale + longevity, 1),
@@ -453,8 +548,12 @@ def compute_seller_scores(store, date: str) -> int:
                 if cflag:
                     components["wash"]["cycle"] = {
                         "date": cycle_date, "detector": cycle_params}
+            if letter_note:
+                components["letter"] = letter_note
+            if components_top is not None:
+                components["top_payer_share"] = components_top
             store.record_seller_score(date, chain, seller, {
-                "score": score, "grade": _grade(score),
+                "score": score, "grade": grade,
                 "provisional": provisional, "snapshot_date": snap_date,
                 "tx_count": tx, "unique_payers": payers,
                 "self_pay_ratio": round(self_ratio, 4),

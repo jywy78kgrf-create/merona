@@ -799,6 +799,17 @@ class Handler(BaseHTTPRequestHandler):
                            cache="public, max-age=3600")
             except Exception:
                 self._send(404, b"not found", "text/plain")
+        elif path == "/live.json":
+            # live settlement pulse (indexer/live_pulse.py, ~10-min timer):
+            # measured deltas since the nightly anchor. Short TTL — this file
+            # is the one thing on the site that moves between cycles.
+            try:
+                body = (ROOT / "serving" / "live_pulse.json").read_bytes()
+                self._send(200, body, "application/json",
+                           cache="public, max-age=60")
+            except OSError:
+                self._send(404, json.dumps({"error": "no pulse yet"}).encode(),
+                           "application/json", cache="public, max-age=60")
         elif path == "/mismatches.json":
             # FREE public payTo-integrity feed (indexer/payto_watch.py writes
             # it nightly, atomically). Static read, edge-cacheable; the

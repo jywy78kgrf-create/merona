@@ -66,14 +66,47 @@
     background:#fff; color:var(--ink); font-family:var(--mono); font-size:10.5px;
     box-shadow:0 2px 10px rgba(38,32,41,.10), 0 1px 2px rgba(38,32,41,.08); white-space:nowrap}
   .chip .ok{color:#1d8a5e; font-weight:500}
+  .lab .livedot{display:inline-block;width:6px;height:6px;border-radius:50%;
+    background:#1d8a5e;margin-left:5px;vertical-align:1px;
+    animation:livedot 2.4s ease-in-out infinite}
+  @keyframes livedot{0%,100%{opacity:.35}50%{opacity:1}}
+  @media(prefers-reduced-motion:reduce){.lab .livedot{animation:none}}
   .hnav{display:flex; align-items:baseline; gap:clamp(16px,2.2vw,30px);
     align-self:flex-start; margin-top:18px;   /* baseline of the x402-settlement-index line */
     font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.2em}
-  .hnav a{color:var(--sub); text-decoration:none}
-  .hnav a:hover{color:var(--ink)}
-  .hnav a.on{color:var(--teal)}
-  .hnav a.free{color:var(--clean)}
-  .hnav a.free:hover{color:var(--teal)}
+  .hnav a{color:var(--c); text-decoration:none;
+    --c:var(--sub); --rim:#3a3143; --core:#2fd6c3;
+    transition:color .25s ease}
+  .hnav a:hover{--c:var(--ink)}
+  .hnav a.on{--c:var(--teal)}
+  .hnav a.free{--c:var(--clean); --rim:#04443d; --core:#7cf0e0}
+  .hnav a.free:hover{--c:var(--teal)}
+  /* The sheen lives INSIDE the letterforms — nothing ever passes over the page,
+     which is what separates this from a highlight bar sliding across. On cream a
+     white peak erases the glyphs, so the travelling core is brand mint braced by
+     a darker rim: letters deepen, flare, and settle as it passes, and contrast
+     never drops. Staggered word to word so it reads as one slow wave. */
+  @supports ((-webkit-background-clip:text) or (background-clip:text)){
+    .hnav a{background-image:linear-gradient(102deg,
+        var(--c) 0%, var(--c) 36%, var(--rim) 45%, var(--core) 50%,
+        var(--rim) 55%, var(--c) 64%, var(--c) 100%);
+      background-size:240% 100%; background-repeat:repeat-x;
+      background-position:100% 0;
+      -webkit-background-clip:text; background-clip:text;
+      -webkit-text-fill-color:transparent; color:transparent;
+      animation:navsheen 5s cubic-bezier(.45,.05,.35,1) infinite}
+    .hnav a:nth-child(2){animation-delay:.5s}
+    .hnav a:nth-child(3){animation-delay:1s}
+  }
+  /* keyframes stay inside 0–100%: outside that range the gradient slides off the
+     glyphs and, with a transparent text fill, the words vanish outright */
+  @keyframes navsheen{
+    0%  {background-position:100% 0}
+    50% {background-position:0% 0}
+    100%{background-position:0% 0}}
+  @media(prefers-reduced-motion:reduce){
+    .hnav a{animation:none; background-image:none;
+      -webkit-text-fill-color:currentColor; color:var(--c)}}
   @media(max-width:1270px){.hnav{display:none}}
   .dot{width:6px;height:6px;border-radius:50%;flex:none}
   .dot.good{background:#2aa06c} .dot.warn{background:#d99a2b} .dot.crit{background:#c94f3d}
@@ -281,6 +314,17 @@
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   .detail .ladder{display:flex;flex-direction:column}
   .detail .ladder:empty{display:none}
+  /* 30-day daily clean-flow step chart — the analytical layer lives here in
+     the expand, one click deep, not on the hero (2026-08-06 decision) */
+  .detail .dchart{margin-top:10px}
+  .detail .dchart:empty{display:none}
+  .detail .dchead{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--sub);
+    text-transform:uppercase;font-weight:600;margin-bottom:5px}
+  .detail .dchead em{font-style:normal;color:#c23a2b}
+  .detail .dchart svg{display:block;width:100%;height:auto}
+  .detail .dcfoot{display:flex;justify-content:space-between;
+    font-family:var(--mono);font-size:8.5px;color:var(--mute);margin-top:3px}
   .detail .lrow{display:grid;grid-template-columns:1fr auto;align-items:baseline;
     column-gap:10px;padding:7px 0 3px}
   .detail .lk{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;
@@ -462,7 +506,7 @@
         <div class="q br"><div class="num muted" data-f="base.gross">$61.5M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
       <div class="rflag" data-f="base.review"></div>
-      <div class="detail"><div class="ladder"></div></div>
+      <div class="detail"><div class="ladder"></div><div class="dchart" data-dc="base"></div></div>
     </article>
 
     <article class="card poly" data-chain="polygon">
@@ -478,7 +522,7 @@
         </div></div>
         <div class="q br"><div class="num muted" data-f="polygon.gross">$9.7M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
-      <div class="detail"><div class="rflag note" data-f="polygon.review">Restated 2026-08-01 — a 3-hop payment ring (~$149K across 32 wallets) is excluded from the clean figure via the published flags file. Found by our payer-side trace after our own 2-hop filters passed it; the correction is recorded, not buried. Evidence: docs/report/polygon_attribution_draft.md</div><div class="ladder"></div></div>
+      <div class="detail"><div class="rflag note" data-f="polygon.review">Restated 2026-08-01 — a 3-hop payment ring (~$149K across 32 wallets) is excluded from the clean figure via the published flags file. Found by our payer-side trace after our own 2-hop filters passed it; the correction is recorded, not buried. Evidence: docs/report/polygon_attribution_draft.md</div><div class="ladder"></div><div class="dchart" data-dc="polygon"></div></div>
     </article>
 
     <article class="card sol" data-chain="solana">
@@ -495,7 +539,7 @@
         <div class="q br"><div class="num muted" data-f="solana.gross">16.4M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
       <div class="rflag" data-f="solana.review"></div>
-      <div class="detail"><div class="ladder"></div></div>
+      <div class="detail"><div class="ladder"></div><div class="dchart" data-dc="solana"></div></div>
     </article>
   </div>
 </main>
@@ -584,7 +628,7 @@
   </div>
 </div>
 
-<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
+<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5" target="_blank" rel="noopener">On-chain anchors</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
 
 <script>
 (() => {
@@ -691,7 +735,6 @@
     fr.addColorStop(0,L); fr.addColorStop(1,M);
     g.fillStyle=fr; g.fillRect(x,y-h,b.w,h);
   }
-
   // ---- studio props ----
   function softShadow(g,x,y,rx,ry,a){
     const s=g.createRadialGradient(x,y,0,x,y,rx);
@@ -976,13 +1019,17 @@
   }
   function applyStats(d){ try{
     CH.forEach(c=>{ const x=d.chains&&d.chains[c]; if(!x) return;
+      _snapCounts[c]=x.settlements;         // nightly baseline for the live pulse
       setF(c+'.count',comma(x.settlements)); setF(c+'.vol',usd(x.volume_usd));
+      _renderLive();                        // re-apply any live delta on top
       setF(c+'.sellers',comma(x.sellers)+' sellers');
       setF(c+'.sellersN',comma(x.sellers));
       if(x.payers!=null) setF(c+'.payers',comma(x.payers));
       // gross gasless USDC (superset) — the struck reference figure, BR quadrant
       if(x.superset_volume_usd!=null){ const g=x.superset_volume_usd;
-        setF(c+'.gross', g>=1e6?'$'+(g/1e6).toFixed(1)+'M':g>=1e3?'$'+Math.round(g/1e3)+'k':'$'+Math.round(g)); }
+        setF(c+'.gross', g>=1e6?'$'+(g/1e6).toFixed(1)+'M':g>=1e3?'$'+Math.round(g/1e3)+'k':'$'+Math.round(g));
+        // same figure feeds the red gap caption under the scene's index charts
+        window.setSceneGross&&window.setSceneGross({[c]:g}); }
       // terminal (real) volume for the TR quadrant: clean when internally
       // consistent, else merchant, else scoped — same descent guard as the ladder
       { const sco=x.volume_usd, mer=x.merchant_volume_usd, cle=x.clean_volume_usd, MAT=0.995;
@@ -1087,8 +1134,107 @@
     });
     if(I.pulse) drawPulse(I.pulse);
     // hero scene reads the same clean numbers as the cards
-    if(I.clean||I.clean_series) window.setSceneData&&window.setSceneData(I.clean,I.clean_series);
+    if(I.clean||I.clean_series_daily) window.setSceneData&&window.setSceneData(I.clean,I.clean_series_daily);
+    if(I.clean_series_daily) drawDetailCharts(I.clean_series_daily);
   }catch(e){ console.error('[merona] render failed:', e); } }
+  // 30-day daily clean-flow step chart, in each chain's expand sheet. SVG,
+  // static, quantitative: dollar axis from the real daily max, weekly ticks,
+  // the same step-after mark the data deserves (daily totals are discrete).
+  window.drawDetailCharts=drawDetailCharts;   // exposed like setSceneData, for harness + reuse
+  function drawDetailCharts(series){
+    const nice=v=>{const p=Math.pow(10,Math.floor(Math.log10(v)));
+      const m=v/p; return (m>=5?5:m>=2?2:1)*p;};
+    const fus=v=>v>=1e6?'$'+(v/1e6).toFixed(1)+'M':v>=1e3?'$'+(v>=1e5?Math.round(v/1e3):(v/1e3).toFixed(1))+'k':'$'+(v>=100?Math.round(v):v>=1?v.toFixed(0):v.toFixed(2));
+    const fdt=s=>{const d=new Date(s+'T00:00:00Z'); if(isNaN(d))return '';
+      return String(d.getUTCDate()).padStart(2,'0')+' '
+        +['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getUTCMonth()];};
+    const cols={base:['#2fb5a8','#1b7f76'],polygon:['#8a63d8','#5a3aa8'],solana:['#eda23e','#b8722a']};
+    document.querySelectorAll('.dchart').forEach(el=>{
+      const c=el.getAttribute('data-dc'), sr=series&&series[c];
+      if(!Array.isArray(sr)||sr.length<2){ el.innerHTML=''; return; }
+      const vals=sr.slice(-30).map(x=>Math.max(0,+(x&&x.v)||0));
+      const n=vals.length, vmax=Math.max(...vals,1e-12);
+      const W=300,Hh=64,pad=1;
+      const X=i=>pad+i*(W-2*pad)/(n-1), Y=v=>Hh-2-(v/vmax)*(Hh-8);
+      let d='M'+X(0).toFixed(1)+','+(Hh-2);
+      for(let i=0;i<n;i++){ d+=' L'+X(i).toFixed(1)+','+Y(vals[i]).toFixed(1);
+        if(i<n-1) d+=' L'+X(i+1).toFixed(1)+','+Y(vals[i]).toFixed(1); }
+      d+=' L'+X(n-1).toFixed(1)+','+(Hh-2)+' Z';
+      let l='M'+X(0).toFixed(1)+','+Y(vals[0]).toFixed(1);
+      for(let i=1;i<n;i++){ l+=' L'+X(i).toFixed(1)+','+Y(vals[i-1]).toFixed(1)
+        +' L'+X(i).toFixed(1)+','+Y(vals[i]).toFixed(1); }
+      const [mid,dark]=cols[c]||cols.base;
+      let grid='';
+      if(vmax>=0.01){ const t1=nice(vmax);
+        for(const tv of (t1/vmax>0.5?[t1,t1/2]:[t1])){
+          const gy=Y(tv).toFixed(1);
+          grid+='<line x1="0" x2="'+W+'" y1="'+gy+'" y2="'+gy+'" stroke="rgba(38,32,41,.12)" stroke-dasharray="1.5 3.5"/>'
+            +'<text x="2" y="'+(gy-2.5)+'" font-size="7.5" fill="#9a90a8" font-family="ui-monospace,monospace">'+fus(tv)+'</text>'; } }
+      let ticks='';
+      for(let i=0;i<n;i+=7) ticks+='<line x1="'+X(i).toFixed(1)+'" x2="'+X(i).toFixed(1)+'" y1="'+(Hh-2)+'" y2="'+Hh+'" stroke="rgba(38,32,41,.3)"/>';
+      const tip=X(n-1).toFixed(1), tipy=Y(vals[n-1]).toFixed(1);
+      el.innerHTML=
+        '<div class="dchead"><span>Daily clean flow · '+n+'d</span>'
+        +'<span>last '+fus(vals[n-1])+'</span></div>'
+        +'<svg viewBox="0 0 '+W+' '+Hh+'" preserveAspectRatio="none" aria-label="daily clean volume, last '+n+' days">'
+        +grid
+        +'<path d="'+d+'" fill="'+mid+'" opacity=".13"/>'
+        +'<path d="'+l+'" fill="none" stroke="'+dark+'" stroke-width="1.3" vector-effect="non-scaling-stroke"/>'
+        +'<line x1="0" x2="'+W+'" y1="'+(Hh-2)+'" y2="'+(Hh-2)+'" stroke="rgba(38,32,41,.28)"/>'
+        +ticks
+        +'<rect x="'+(tip-2.5)+'" y="'+(tipy-2.5)+'" width="5" height="5" fill="'+dark+'"/>'
+        +'</svg>'
+        +'<div class="dcfoot"><span>'+fdt(sr[Math.max(0,sr.length-30)].d)+'</span>'
+        +'<span>wash-adjusted · nightly</span><span>'+fdt(sr[sr.length-1].d)+'</span></div>';
+    });
+  }
+  // ---- live settlement pulse -------------------------------------------------
+  // The headline counts accumulate between nightly cycles: /live.json carries
+  // MEASURED on-chain deltas since the block the nightly stopped at (same
+  // predicate, finalized blocks only — indexer/live_pulse.py). The nightly
+  // remains the verified figure; at 02:17 the anchor moves and deltas reset.
+  // Numbers count up to each new measurement — animation of real increments,
+  // never extrapolation between polls.
+  const _snapCounts={}, _liveDeltas={}, _shownCounts={};
+  function _countUp(el,from,to){
+    if(!el||from===to){ if(el) el.textContent=comma(to); return; }
+    const t0=performance.now(), dur=900;
+    (function step(t){ const k=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-k,3);
+      el.textContent=comma(Math.round(from+(to-from)*e));
+      if(k<1) requestAnimationFrame(step); })(t0);
+  }
+  function _renderLive(){
+    let totalDelta=0;
+    CH.forEach(c=>{
+      const base=_snapCounts[c]; if(base==null) return;
+      const d=_liveDeltas[c]||0; totalDelta+=d;
+      const want=base+d;
+      document.querySelectorAll('[data-f="'+c+'.count"]').forEach(el=>{
+        const from=_shownCounts[c]!=null?_shownCounts[c]:base;
+        _countUp(el,from,want);
+      });
+      _shownCounts[c]=want;
+      // the card gains a quiet LIVE tick note once a real delta exists
+      const lab=document.querySelector('[data-f="'+c+'.count"]')
+        ?.parentElement?.querySelector('.lab');
+      if(lab&&d>0&&!lab.dataset.live){ lab.dataset.live='1';
+        lab.innerHTML='x402 settlements <span class="livedot" title="counting '
+          +'finalized on-chain settlements since the last nightly cycle — '
+          +'verified at 02:17 UTC"></span>'; }
+    });
+  }
+  async function pollLive(){
+    try{
+      const r=await fetch('/live.json',{cache:'no-store'});
+      if(!r.ok) return;
+      const L=await r.json();
+      CH.forEach(c=>{ const e=L[c];
+        if(e&&typeof e.scoped_delta==='number') _liveDeltas[c]=e.scoped_delta; });
+      _renderLive();
+    }catch(e){/* pulse is optional; the nightly numbers stand on their own */}
+  }
+  setInterval(pollLive,60000); setTimeout(pollLive,2500);
+
   function drawPulse(P){
     const el=document.getElementById('pulse'); if(!el) return;
     const g=el.getContext('2d'), w=el.width, h=el.height;

@@ -37,6 +37,11 @@ from storage import Store, open_store  # noqa: E402
 # Structured mechanisms live in this dataset (for the snapshot fingerprint).
 MECHANISMS = ("eip3009_usdc", "spl_facilitator", "permit2_erc20")
 
+# First night whose clean_metrics rows are computed by the current (wash-v3)
+# methodology. Rows before this mix eras: charting them beside corrected rows
+# renders the 2026-07-31 Polygon restatement as a market crash.
+CLEAN_SERIES_SINCE = os.environ.get("CLEAN_SERIES_SINCE", "2026-08-01")
+
 # Additive EVM chains indexed after Base+Solana each run, best-effort. Base is
 # the primary series; these never block its snapshot. Arbitrum uses the
 # receipt-based fetch (use_receipts=True) so its ~345k blocks/day + high USDC
@@ -212,13 +217,24 @@ def write_seller_snapshot(store: Store, snapshot_date: str, head: int,
         # sort identically -> the anchored seller_aggregates.csv is byte-for-byte
         # reproducible by anyone re-deriving it (audit LB-9 / snapshot integrity).
         r" GROUP BY chain, seller ORDER BY volume DESC, chain, seller").fetchall()
+    # top single-payer settlement count per seller (v4.2 concentration input):
+    # same filters, per-payer counts rolled up to a max. A seller whose volume
+    # is one counterparty must not wear an A on breadth it doesn't have.
+    top_rows = store.db.execute(
+        r"SELECT chain, seller, MAX(c) FROM (SELECT chain, seller, payer, "
+        r"COUNT(*) c FROM settlements WHERE chain NOT LIKE '%\_permit2' "
+        r"ESCAPE '\' " + wf +
+        r" GROUP BY chain, seller, payer) t GROUP BY chain, seller").fetchall()
+    top_by = {(r[0], r[1]): int(r[2] or 0) for r in top_rows}
     # Normalize the volume column (SQLite total()->REAL, Postgres SUM->Decimal) to
     # a clean integer so snapshots stay byte-identical across backends.
-    rows = [(*r[:4], store._norm_vol(r[4]), *r[5:]) for r in rows]
+    rows = [(*r[:4], store._norm_vol(r[4]), *r[5:],
+             top_by.get((r[0], r[1]), 0)) for r in rows]
     with open(sellers_csv, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["chain", "seller", "tx_count", "unique_payers",
-                    "volume_base_units", "first_ts", "last_ts", "self_pay_tx"])
+                    "volume_base_units", "first_ts", "last_ts", "self_pay_tx",
+                    "top_payer_tx"])
         w.writerows(rows)
 
     # PAYER side of the same ledger. Sellers are scored on how many distinct
@@ -597,24 +613,40 @@ def build_instr_metrics(store: Store) -> dict:
     except Exception:
         pass
 
-    # Clean series: per-chain daily clean volume over the trailing 30 days.
-    # Published so the dashboard's hero skylines can be bound to the SAME
-    # metric and window as the clean figure on each card — one bar per day.
-    # Previously the art was bound to settlement COUNT, which is the metric
-    # this index exists to discredit: it gave a ~$1 chain the second-largest
-    # visual on the page.
+    # Clean series: per-chain DAILY clean volume (day-over-day delta of the
+    # nightly cumulative) over the trailing 30 days, for the dashboard's hero
+    # charts — one step per day, same metric as the clean figure on each card.
+    #
+    # Two hard lessons encoded here (2026-08-06, live):
+    #  - clean_metrics.clean_volume_usd is CUMULATIVE-as-of-that-night. The
+    #    first emission published it raw and the hero charted a "$50M daily"
+    #    staircase — lifetime totals mistaken for daily flow.
+    #  - rows before the wash-v3 restatement carry the OLD methodology's
+    #    numbers; charted next to corrected rows they render our own July 31
+    #    correction as a market crash. Pre-cutover rows never enter the series.
+    # New key (clean_series_daily) so a stale cumulative payload can never
+    # feed a chart that now expects daily deltas.
     try:
-        cutoff = (datetime.now(timezone.utc).date()
-                  - timedelta(days=30)).isoformat()
-        series: dict = {}
+        cutoff = max((datetime.now(timezone.utc).date()
+                      - timedelta(days=31)).isoformat(),
+                     CLEAN_SERIES_SINCE)
+        rows_by_chain: dict = {}
         for ch, md, cv in store.db.execute(store.q(
                 "SELECT chain, measured_date, clean_volume_usd FROM "
                 "clean_metrics WHERE measured_date >= ? "
                 "ORDER BY measured_date"), (cutoff,)).fetchall():
-            series.setdefault(ch, []).append(
-                {"d": md, "v": round(float(cv or 0), 2)})
+            rows_by_chain.setdefault(ch, []).append((md, float(cv or 0)))
+        series: dict = {}
+        for ch, rows in rows_by_chain.items():
+            pts = []
+            for (pd, pv), (md, cv) in zip(rows, rows[1:]):
+                # negative deltas (restatements, backfills) clamp to zero —
+                # a correction is not negative commerce
+                pts.append({"d": md, "v": round(max(0.0, cv - pv), 2)})
+            if len(pts) >= 2:
+                series[ch] = pts[-30:]
         if series:
-            out["clean_series"] = series
+            out["clean_series_daily"] = series
     except Exception:
         pass
 

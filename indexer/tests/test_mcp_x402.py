@@ -151,10 +151,31 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     s, b, _ = _req("/mcp.json")
     assert s == 200 and [t["name"] for t in b["tools"]] == [
         "payto_check", "mismatch_feed", "clean_stats", "trust_score"]
+    # Glama ownership proof. Contact address only — this file is public, so a
+    # regression that put anything else in it would be a leak.
+    s, b, _ = _req("/.well-known/glama.json")
+    assert s == 200, s
+    assert set(b) == {"$schema", "maintainers"}, b
+    assert b["maintainers"][0]["email"] == "hello@merona.io", b
+    assert "glama.ai" in b["$schema"], b
+
     s, b, _ = _mcp("initialize")
     assert s == 200 and b["result"]["serverInfo"]["name"] == "merona-mcp"
     s, b, _ = _mcp("tools/list")
     assert len(b["result"]["tools"]) == 4
+
+    # directory scanners (Smithery, Glama, mcp.so) probe resources/prompts on
+    # every server regardless of advertised capabilities. Answer empty rather
+    # than -32601 so their scan logs come back clean.
+    s, b, _ = _mcp("resources/list")
+    assert s == 200 and b["result"]["resources"] == [] and "error" not in b
+    s, b, _ = _mcp("resources/templates/list")
+    assert s == 200 and b["result"]["resourceTemplates"] == []
+    s, b, _ = _mcp("prompts/list")
+    assert s == 200 and b["result"]["prompts"] == []
+    # genuinely unknown methods must still be rejected, not silently emptied
+    s, b, _ = _mcp("does/not/exist")
+    assert s == 200 and b["error"]["code"] == -32601
 
     # free tools
     out = _tool("payto_check", {"query": "api.x.example"})
@@ -168,7 +189,7 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     # paid tool via api key
     out = _tool("trust_score", {"chain": "base", "address": SELLER,
                                 "api_key": "sk_live_1"})
-    assert out["grade"] and out["score_version"] == 3
+    assert out["grade"] and out["score_version"] == 4
 
     # paid tool without key/payment -> payment_required instructions
     out = _tool("trust_score", {"chain": "base", "address": SELLER})
@@ -216,3 +237,21 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     # the paid + MCP lanes still land in the log, tool-name resolved
     assert any(p.startswith("/mcp:") for p in logged), logged
     assert any(r["id"].startswith("x402:") for r in usage)
+
+
+def test_unreadable_keys_file_degrades_instead_of_crashing(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """Learned live 2026-08-06: a root-owned 600 keys file under User=x402
+    crashed the whole API at import. An unreadable or malformed keys file must
+    mean 'no file keys + a loud journal line', never a dead service — the free
+    tools and the x402 lane don't depend on keys at all."""
+    import trust_api
+    # a directory passes .exists() but read_text() raises (IsADirectoryError,
+    # an OSError) — same class of failure as EACCES without needing to drop
+    # privileges inside the test runner
+    monkeypatch.setenv("TRUST_API_KEYS_FILE", str(tmp_path))
+    monkeypatch.setenv("TRUST_API_KEYS", "sk_env_1:envkey")
+    keys = trust_api._load_keys()
+    assert keys == {"sk_env_1": "envkey"}          # env keys survive
+    assert "WARNING" in capsys.readouterr().err    # and it says so, loudly
