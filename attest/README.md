@@ -20,19 +20,27 @@ other byte-for-byte.
    adverse finding stay off-chain, where they can be argued with, corrected,
    and read in context. An on-chain F is a public accusation with a
    permanent timestamp — that violates "recorded facts, not accusations".
-3. **Never self-pay, never simulate commerce.** The attester wallet makes
-   attestation transactions only. merona never generates transactions that
-   look like x402 settlements toward its own payTo — that is literally the
-   mrdn pattern we flag. Correspondingly, merona's own payTo is excluded
-   from clean metrics as a seller (`indexer/wash.py`, `X402_OWN_PAYTO`),
-   exactly like relayer addresses: even the *appearance* of our numbers
-   containing our own receipts is off the table.
-4. **Dedicated attester wallet.** Never the payTo/revenue wallet, never a
-   wallet holding meaningful funds. It carries a few dollars of Base ETH for
-   gas and its key exists in exactly two places: `/etc/x402-attest.key` on
-   the box (owner `x402`, mode 600) and the password manager entry
-   "merona attester key". The key is read from a file, never from env or
-   argv (env leaks via /proc and `systemctl show`).
+3. **Never self-pay, never simulate commerce.** merona never generates
+   transactions that look like x402 settlements toward its own payTo — that
+   is literally the mrdn pattern we flag. The wallet's outbound x402
+   purchases (`payprobe.py`) are GENUINE: real money, to other sellers,
+   for content we actually receive, under hard caps — and paying our own
+   payTo, the wallet itself, or a registry relayer is a coded refusal
+   (`PolicyError`), not a config option. Correspondingly, merona's own
+   payTo is excluded from clean metrics as a seller (`indexer/wash.py`,
+   `X402_OWN_PAYTO`), exactly like relayer addresses: even the
+   *appearance* of our numbers containing our own receipts is off the
+   table. Our purchases DO count toward the sellers we pay — we are an
+   honest customer like any other, at cents of scale.
+4. **One operational wallet, outbound-only.** `0x6446…e6d5`
+   (merona.base.eth) attests, holds the basename, and makes payprobe
+   purchases — it NEVER receives commerce (the payTo/revenue wallet stays
+   separate) and never holds meaningful funds: a few dollars of Base ETH
+   for gas plus a small USDC float for probes. Its key exists in exactly
+   two places: `/etc/x402-attest.key` on the box (owner `x402`, mode 600)
+   and the password manager entry "merona attester key". The key is read
+   from a file, never from env or argv (env leaks via /proc and
+   `systemctl show`).
 5. **Every revocation carries a public-record reason** in the local ledger
    (`revoke.py` refuses to run without one).
 
@@ -61,7 +69,11 @@ history stays valid for the dates it covers.
 | `anchor_attest.py` | nightly: attest unattested snapshot days (cap 3/run) |
 | `register_schema.py` | one-time schema registration on Base |
 | `revoke.py` | revocation runbook, executable |
+| `identity_attest.py` | one-time chain→site identity attestation |
+| `basename.py` | one-time reverse-record claim (merona.base.eth) |
+| `payprobe.py` | genuine paid probe of one x402 endpoint (capped, gated) |
 | `../data/indexer/attest/anchor_attestations.jsonl` | append-only local ledger |
+| `../data/indexer/payprobe/receipts.jsonl` | append-only purchase receipts |
 
 Schema v1: `string snapshotDate,bytes32 combinedSha256,string sourceHeadCommit`
 (revocable, no resolver). The schema UID is deterministic —

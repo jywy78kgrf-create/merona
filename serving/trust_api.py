@@ -841,7 +841,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "initialize":
             result = {"protocolVersion": MCP_PROTOCOL,
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "merona-mcp", "version": "1.0"}}
+                      "serverInfo": {"name": "merona-mcp", "version": "1.1"}}
         elif method == "tools/list":
             result = {"tools": MCP_TOOLS}
         elif method in ("resources/list", "resources/templates/list"):
@@ -868,6 +868,10 @@ class Handler(BaseHTTPRequestHandler):
                                    "text": json.dumps(out)}],
                       "isError": bool(isinstance(out, dict)
                                       and out.get("error"))}
+            if isinstance(out, dict):
+                # structured twin of the text content (spec 2025-06-18);
+                # older clients simply ignore the extra key
+                result["structuredContent"] = out
             _meter(ident, f"/mcp:{name[:40]}", 200)
         else:
             return self._send(200, {"jsonrpc": "2.0", "id": mid,
@@ -883,7 +887,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-MCP_PROTOCOL = "2025-03-26"
+# 2025-06-18: the spec revision that added tool outputSchema +
+# structuredContent, both of which we now serve
+MCP_PROTOCOL = "2025-06-18"
 MCP_TOOLS = [
     {"name": "payto_check",
      "description": "Check whether an x402 endpoint or wallet pays out where "
@@ -894,11 +900,28 @@ MCP_TOOLS = [
                     "Free, no key. Use mismatch_feed instead to list every "
                     "known mismatch. Records are dated facts, not "
                     "accusations, and no record found is not a clearance.",
+     "annotations": {"title": "payTo integrity check", "readOnlyHint": True,
+                     "destructiveHint": False, "idempotentHint": True,
+                     "openWorldHint": False},
      "inputSchema": {"type": "object", "required": ["query"],
                      "properties": {"query": {
                          "type": "string", "maxLength": 256,
                          "description": "Wallet address (0x… or base58) or "
-                                        "endpoint URL/hostname to look up."}}}},
+                                        "endpoint URL/hostname to look up."}}},
+     "outputSchema": {
+         "type": "object", "additionalProperties": True,
+         "description": "Match results for the queried wallet/endpoint.",
+         "properties": {
+             "query": {"type": "string",
+                       "description": "The query as interpreted."},
+             "matches": {"type": "array",
+                         "description": "Mismatch/rotation records touching "
+                                        "the query; empty when none known."},
+             "note": {"type": "string",
+                      "description": "Interpretation guidance — dated facts, "
+                                     "not accusations."},
+             "error": {"type": "string",
+                       "description": "Present only on backend failure."}}}},
     {"name": "mismatch_feed",
      "description": "List every x402 endpoint currently advertising one "
                     "payout address while asking payers for another, from "
@@ -907,7 +930,29 @@ MCP_TOOLS = [
                     "counts and as-of dates. Takes no arguments. Free, no "
                     "key. Use payto_check instead when you already have a "
                     "specific address or endpoint to check.",
-     "inputSchema": {"type": "object", "properties": {}}},
+     "annotations": {"title": "payTo mismatch feed", "readOnlyHint": True,
+                     "destructiveHint": False, "idempotentHint": True,
+                     "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {},
+                     "additionalProperties": False,
+                     "description": "This tool takes no arguments."},
+     "outputSchema": {
+         "type": "object", "additionalProperties": True,
+         "description": "The current public mismatch feed.",
+         "properties": {
+             "meta": {"type": "object",
+                      "description": "Feed provenance: generated-at, counts, "
+                                     "method pointer."},
+             "catalog_vs_live": {
+                 "type": "array",
+                 "description": "Endpoints advertising one payout address "
+                                "while asking payers for another (top 10)."},
+             "payto_rotation_count": {
+                 "type": "integer",
+                 "description": "Endpoints with dated payout-address "
+                                "rotation history."},
+             "error": {"type": "string",
+                       "description": "Present only on backend failure."}}}},
     {"name": "clean_stats",
      "description": "Get wash-adjusted x402 settlement volume per chain — "
                     "spend that survives removal of funded loops and "
@@ -916,7 +961,29 @@ MCP_TOOLS = [
                     "count, clean volume in USD and an as-of date per chain. "
                     "Takes no arguments. Free, no key. These are the figures "
                     "published on merona.io.",
-     "inputSchema": {"type": "object", "properties": {}}},
+     "annotations": {"title": "clean settlement stats", "readOnlyHint": True,
+                     "destructiveHint": False, "idempotentHint": True,
+                     "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {},
+                     "additionalProperties": False,
+                     "description": "This tool takes no arguments."},
+     "outputSchema": {
+         "type": "object", "additionalProperties": True,
+         "description": "Wash-adjusted settlement figures per chain.",
+         "properties": {
+             "clean": {
+                 "type": "array",
+                 "description": "One entry per chain.",
+                 "items": {"type": "object", "properties": {
+                     "chain": {"type": "string"},
+                     "clean_settlements": {"type": "integer"},
+                     "clean_volume_usd": {"type": "number"},
+                     "as_of": {"type": "string",
+                               "description": "Measurement date (UTC)."}}}},
+             "note": {"type": "string",
+                      "description": "Scope and method pointer."},
+             "error": {"type": "string",
+                       "description": "Present only on backend failure."}}}},
     {"name": "trust_score",
      "description": "Score a specific seller wallet before paying it: "
                     "wash-aware m.Score with an A–F grade, component "
@@ -927,6 +994,9 @@ MCP_TOOLS = [
                     "payment=<base64 X-PAYMENT payload> to pay via x402, or "
                     "api_key=<key>. Called without either, it returns x402 "
                     "payment instructions rather than an error.",
+     "annotations": {"title": "seller trust score", "readOnlyHint": True,
+                     "destructiveHint": False, "idempotentHint": True,
+                     "openWorldHint": False},
      "inputSchema": {"type": "object", "required": ["chain", "address"],
                      "properties": {
                          "chain": {"type": "string",
@@ -943,7 +1013,37 @@ MCP_TOOLS = [
                          "payment": {"type": "string",
                                      "description": "Base64 X-PAYMENT "
                                                     "payload for a single "
-                                                    "x402 payment."}}}},
+                                                    "x402 payment."}}},
+     "outputSchema": {
+         "type": "object", "additionalProperties": True,
+         "description": "The seller's score, or x402 payment instructions "
+                        "when called without api_key/payment.",
+         "properties": {
+             "grade": {"type": ["string", "null"],
+                       "description": "A–F letter; null means unrated "
+                                      "(evidence gate, not an adverse "
+                                      "signal)."},
+             "score": {"type": ["number", "null"],
+                       "description": "Numeric m.Score behind the letter."},
+             "tier": {"type": "string",
+                      "description": "unrated | provisional | verified."},
+             "suggested_action": {
+                 "type": "object",
+                 "description": "Deterministic action hint (PROCEED/CAUTION/"
+                                "INVESTIGATE/DECLINE/INSUFFICIENT_EVIDENCE) "
+                                "with reasons and rule version."},
+             "components": {"type": "object",
+                            "description": "Score component breakdown."},
+             "snapshot_sha256": {
+                 "type": "string",
+                 "description": "Snapshot hash for independent "
+                                "re-derivation."},
+             "payment_required": {
+                 "type": "object",
+                 "description": "x402 payment instructions; present only "
+                                "when the call is unpaid."},
+             "error": {"type": "string",
+                       "description": "Present only on failure."}}}},
 ]
 MCP_MANIFEST = {
     "name": "merona-mcp",
