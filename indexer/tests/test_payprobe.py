@@ -181,5 +181,41 @@ def test_classify_body_flags_json_error_shapes():
     assert not ok and not err
 
 
+def test_delivery_states_latest_settled_receipt_wins():
+    """trust_api._delivery_states: delivered clears an older charged_unserved
+    (and vice versa); rejected rows carry no delivery information."""
+    import re
+    from pathlib import Path
+    api_src = (Path(__file__).resolve().parents[2] / "serving"
+               / "trust_api.py").read_text()
+    m = re.search(r"_RECEIPT_CHAINS = \{.*?\n\n\ndef _delivery\(",
+                  api_src, re.S)
+    assert m, "delivery loader not found in trust_api"
+    ns = {"json": json}
+    exec(m.group(0)[:m.group(0).rfind("def _delivery(")], ns)
+    states = ns["_delivery_states"]
+
+    seller = "0x" + "ab" * 20
+    rows = [
+        {"ts": "2026-08-01T00:00:00", "network": "eip155:8453",
+         "pay_to": seller, "outcome": "settled_no_content",
+         "http_status": 405, "url": "https://s/x",
+         "settlement": {"transaction": "0x" + "11" * 32}},
+        {"ts": "2026-08-07T00:00:00", "network": "eip155:8453",
+         "pay_to": seller, "outcome": "delivered", "url": "https://s/x"},
+        {"ts": "2026-08-08T00:00:00", "network": "eip155:8453",
+         "pay_to": seller, "outcome": "rejected", "url": "https://s/x"},
+    ]
+    out = states([json.dumps(r) for r in rows])
+    st = out[("base", seller)]
+    assert st["status"] == "delivery_verified" and st["as_of"] == "2026-08-07"
+
+    # order reversed: a later charge-without-content replaces the good record
+    rows[0]["ts"], rows[1]["ts"] = "2026-08-09T00:00:00", "2026-08-01T00:00:00"
+    st = states([json.dumps(r) for r in rows])[("base", seller)]
+    assert st["status"] == "charged_unserved"
+    assert st["settlement_tx"] == "0x" + "11" * 32 and st["http_status"] == 405
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

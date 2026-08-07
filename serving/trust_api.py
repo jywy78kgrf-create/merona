@@ -176,6 +176,73 @@ def _feed():
             return _feed_cache["feed"]
     return _feed_cache["feed"]
 
+# paid delivery receipts (attest/paysweep.py) — the ground-truth ledger of
+# merona actually buying from sellers; mtime-cached like the feed
+RECEIPTS_PATH = Path(os.environ.get(
+    "X402_RECEIPTS_PATH",
+    str(ROOT / "data" / "indexer" / "payprobe" / "receipts.jsonl")))
+_delivery_cache = {"mtime": None, "states": {}}
+_RECEIPT_CHAINS = {"base": "base", "eip155:8453": "base",
+                   "polygon": "polygon", "eip155:137": "polygon"}
+
+
+def _delivery_states(lines) -> dict:
+    """{(chain, payto): delivery state} — the LATEST settled receipt wins per
+    seller, so a seller who fixes their endpoint clears a charged_unserved
+    flag on the next paid probe. Only settled outcomes carry delivery
+    information: `delivered` proves the seller serves paying customers;
+    `settled_no_content` proves a charge with nothing served (settlement tx
+    recorded). Rejected/unreachable rows say nothing about delivery."""
+    rows = []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        chain = _RECEIPT_CHAINS.get(str(r.get("network", "")).lower())
+        if not chain or not r.get("pay_to"):
+            continue
+        if r.get("outcome") not in ("delivered", "settled_no_content"):
+            continue
+        rows.append((str(r.get("ts") or ""), chain, r))
+    out: dict = {}
+    for ts, chain, r in sorted(rows):
+        key = (chain, r["pay_to"].lower())
+        if r["outcome"] == "delivered":
+            out[key] = {
+                "status": "delivery_verified", "as_of": ts[:10],
+                "probe_url": r.get("url"),
+                "note": "merona paid this seller's listed endpoint with a "
+                        "real x402 settlement and received well-formed "
+                        "content on the dated probe."}
+        else:
+            out[key] = {
+                "status": "charged_unserved", "as_of": ts[:10],
+                "probe_url": r.get("url"),
+                "http_status": r.get("http_status"),
+                "settlement_tx": (r.get("settlement") or {}).get("transaction"),
+                "note": "on the dated probe the payment settled on-chain but "
+                        "the request was then refused (HTTP status above). "
+                        "A recorded fact about one request, not an intent "
+                        "claim; a later delivering probe replaces this."}
+    return out
+
+
+def _delivery(chain: str, address: str) -> dict | None:
+    try:
+        m = RECEIPTS_PATH.stat().st_mtime
+    except OSError:
+        return None
+    if _delivery_cache["mtime"] != m:
+        try:
+            _delivery_cache["states"] = _delivery_states(
+                RECEIPTS_PATH.read_text().splitlines())
+            _delivery_cache["mtime"] = m
+        except Exception:
+            pass
+    return _delivery_cache["states"].get((chain, address.lower()))
+
+
 # Rotate the usage file once instead of growing without bound (audit LB-6): at
 # the cap it is renamed to <name>.1 (previous generation overwritten).
 USAGE_MAX_BYTES = int(os.environ.get("TRUST_API_USAGE_MAX_MB", "64")) * 1024 * 1024
@@ -361,7 +428,7 @@ def _adverse_findings() -> dict:
     return _adverse
 
 
-ACTION_RULE_VERSION = 1
+ACTION_RULE_VERSION = 2
 
 
 def _suggested_action(resp: dict) -> dict:
@@ -392,11 +459,23 @@ def _suggested_action(resp: dict) -> dict:
     # letter — unrated, which is INSUFFICIENT_EVIDENCE with a truthful reason
     unrated = (not unscored and not adverse
                and grade in ("", "UNKNOWN", "NONE"))
+    # rule v2: paid-probe delivery evidence (the `delivery` field of this
+    # same response). charged_unserved is settled-payment-grade evidence, so
+    # it floors the action at INVESTIGATE even for an unscored address —
+    # unlike absence of history, this is something that happened.
+    dlv = resp.get("delivery") or {}
+    charged = dlv.get("status") == "charged_unserved"
     reasons = []
     if adverse:
         reasons.append("hand-verified adverse finding on record")
     if flags:
         reasons.append("wash signals: " + ", ".join(flags))
+    if charged:
+        reasons.append("paid probe: payment settled on-chain but the request "
+                       "was refused (settlement tx in `delivery`)")
+    elif dlv.get("status") == "delivery_verified":
+        reasons.append(f"paid probe delivered content "
+                       f"({dlv.get('as_of', 'dated')})")
     if unrated:
         reasons.append("unrated — evidence base below the letter-publication "
                        "gate; the score is computed but no letter is claimed")
@@ -421,6 +500,8 @@ def _suggested_action(resp: dict) -> dict:
         action = "CAUTION"
     else:
         action = "PROCEED"
+    if charged and action in ("PROCEED", "CAUTION", "INSUFFICIENT_EVIDENCE"):
+        action = "INVESTIGATE"
     return {"action": action,
             "rule_version": ACTION_RULE_VERSION,
             "because": reasons,
@@ -447,20 +528,28 @@ def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
         # scored as a merchant (a facilitator's own address is excluded from the
         # seller universe, so mrdn 404s on the normal path — the finding is the
         # whole answer here).
+        dstate = _delivery(chain, address)
         if finding:
             out = {"chain": chain, "seller": address,
                    "score": None, "grade": finding.get("grade_override", "F"),
                    "status": "adverse_finding", "measured_date": None,
                    "adverse_findings": [finding]}
+            if dstate:
+                out["delivery"] = dstate
             out["suggested_action"] = _suggested_action(out)
             return 200, out
         # The 404 carries an action too: an agent asking "should I pay this?"
         # needs "we have no record" to be distinguishable from "we have bad
-        # news", and it is the same field either way.
-        return 404, {"error": "unknown seller",
-                     "detail": "no settlements observed for this address on "
-                               "this chain in the witnessed index",
-                     "suggested_action": _suggested_action({})}
+        # news", and it is the same field either way. Paid-probe evidence
+        # rides along even here — a charged_unserved receipt is something we
+        # KNOW about an address the index hasn't scored yet.
+        body = {"error": "unknown seller",
+                "detail": "no settlements observed for this address on "
+                          "this chain in the witnessed index"}
+        if dstate:
+            body["delivery"] = dstate
+        body["suggested_action"] = _suggested_action(body)
+        return 404, body
     (mdate, score, grade, prov, snap, tx, payers, spr, listed, comp,
      ver) = rows[0]
     try:
@@ -492,6 +581,9 @@ def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
                         "distinct payers). Not an adverse signal.")
     else:
         resp["tier"] = "provisional" if resp.get("provisional") else "verified"
+    dstate = _delivery(chain, address)
+    if dstate:
+        resp["delivery"] = dstate
     resp["suggested_action"] = _suggested_action(resp)
     return 200, resp
 
@@ -1038,6 +1130,13 @@ MCP_TOOLS = [
                  "type": "string",
                  "description": "Snapshot hash for independent "
                                 "re-derivation."},
+             "delivery": {
+                 "type": "object",
+                 "description": "Paid-probe delivery evidence, when merona "
+                                "has bought from this seller: status "
+                                "delivery_verified (dated) or "
+                                "charged_unserved (payment settled, request "
+                                "refused; settlement tx included)."},
              "payment_required": {
                  "type": "object",
                  "description": "x402 payment instructions; present only "

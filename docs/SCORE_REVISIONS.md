@@ -232,3 +232,29 @@ transactions that resemble commerce toward its own payTo.
 Expected effect on the clean series: none today (the address has no
 recorded settlements as seller); the guard exists for the day that stops
 being true.
+
+## suggested_action rule v2 — paid-probe delivery evidence — 2026-08-07
+
+Trigger: the first delivery sweep (attest/paysweep.py) — merona paid every
+discoverable Base seller's cheapest listed endpoint once (502 targets,
+$1.72 total). Outcomes, receipt-backed: 150 delivered, 201 no live
+paywall, 118 could not complete a sale, 12 **settled the payment on-chain
+and then refused the request** (charge-before-validate defects: 400s on
+missing params, 405s on method, 500s — each row carries the settlement tx
+and the delivered-content hash).
+
+Seller responses now carry a `delivery` field when merona has bought from
+the address: `delivery_verified` (dated, with probe URL) or
+`charged_unserved` (dated, with settlement tx and HTTP status). Latest
+settled receipt wins, so a seller who fixes their endpoint clears the flag
+on the next paid probe. Framed as a recorded fact about one request —
+never an intent claim — and it stays off-chain per attest/README.md
+policy #2 (adverse findings are argued with, not timestamped forever).
+
+Rule change (v1 → v2): `charged_unserved` floors the action at
+INVESTIGATE — it lifts PROCEED/CAUTION/INSUFFICIENT_EVIDENCE, never
+softens DECLINE, and applies even to unscored addresses (unlike absence
+of history, a settled-but-unserved charge is something that happened).
+`delivery_verified` adds a dated reason but never upgrades the action —
+delivering once is worth recording, not worth overriding the grade.
+Pinned in test_suggested_action.py.

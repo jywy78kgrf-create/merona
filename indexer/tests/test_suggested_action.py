@@ -31,7 +31,7 @@ ACT, VERSION = _load()
 
 def test_rule_version_is_pinned():
     # bump deliberately, with a dated note in docs/SCORE_REVISIONS.md
-    assert VERSION == 1
+    assert VERSION == 2
 
 
 def test_no_data_is_never_bad_news():
@@ -82,6 +82,39 @@ def test_proceed_requires_good_grade_full_window_and_no_flags():
     for g in ("A", "B"):
         assert ACT({"grade": g, "score": 90,
                     "provisional": False})["action"] == "PROCEED"
+
+
+CHARGED = {"status": "charged_unserved", "as_of": "2026-08-07",
+           "settlement_tx": "0x" + "ab" * 32}
+
+
+def test_charged_unserved_floors_at_investigate():
+    """Rule v2: a settled payment the seller then refused to serve is
+    evidence, not absence — it lifts PROCEED/CAUTION/INSUFFICIENT_EVIDENCE
+    to INVESTIGATE, even for an address the index has never scored."""
+    r = ACT({"grade": "A", "score": 95, "provisional": False,
+             "delivery": CHARGED})
+    assert r["action"] == "INVESTIGATE"
+    assert any("settled on-chain" in b for b in r["because"])
+    assert ACT({"grade": "C", "score": 60, "provisional": False,
+                "delivery": CHARGED})["action"] == "INVESTIGATE"
+    assert ACT({"delivery": CHARGED})["action"] == "INVESTIGATE"   # unscored
+
+
+def test_charged_unserved_never_softens_a_decline():
+    assert ACT({"grade": "F", "score": 10, "provisional": False,
+                "delivery": CHARGED})["action"] == "DECLINE"
+
+
+def test_delivery_verified_adds_a_reason_but_no_upgrade():
+    """Delivering once is worth recording, not worth overriding the grade —
+    C stays CAUTION, A stays PROCEED, the receipt shows in `because`."""
+    ok = {"status": "delivery_verified", "as_of": "2026-08-07"}
+    r = ACT({"grade": "C", "score": 60, "provisional": False, "delivery": ok})
+    assert r["action"] == "CAUTION"
+    assert any("delivered content" in b for b in r["because"])
+    assert ACT({"grade": "A", "score": 95, "provisional": False,
+                "delivery": ok})["action"] == "PROCEED"
 
 
 def test_every_answer_carries_its_reasons_and_version():
