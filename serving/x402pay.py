@@ -39,7 +39,7 @@ NETWORK = os.environ.get("X402_NETWORK", "base")
 # native USDC on Base (6 decimals)
 ASSET = os.environ.get(
     "X402_ASSET", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").lower()
-TIMEOUT_S = float(os.environ.get("X402_FACILITATOR_TIMEOUT", "20"))
+TIMEOUT_S = float(os.environ.get("X402_FACILITATOR_TIMEOUT", "12"))
 MAX_PAYLOAD = 16 * 1024
 
 

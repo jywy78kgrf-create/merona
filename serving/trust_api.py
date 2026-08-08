@@ -428,6 +428,38 @@ def _adverse_findings() -> dict:
     return _adverse
 
 
+def _approve_mod():
+    """Lazy, once-only import of outreach/approve — isolated so a missing
+    outreach module never affects the trust API's core routes, and the path
+    insert happens exactly once (not per request)."""
+    p = str(ROOT / "outreach")
+    if p not in sys.path:
+        sys.path.insert(0, p)
+    import approve
+    return approve
+
+
+def _outreach_review(token: str) -> tuple[int, str]:
+    """GET /outreach/review — the approval page (read-only; POST approves)."""
+    try:
+        return _approve_mod().review_html(token)
+    except Exception as e:
+        print(f"[trust-api] outreach review error: {e}", file=sys.stderr)
+        return 500, "<!doctype html>approval temporarily unavailable"
+
+
+def _outreach_approve(token: str) -> tuple[bool, str]:
+    """POST /outreach/approve — record approval only; no send here."""
+    try:
+        approve = _approve_mod()
+        if approve.mark_approved(token):
+            return True, approve.approved_page()
+        return False, "<!doctype html>link expired or already used"
+    except Exception as e:
+        print(f"[trust-api] outreach approve error: {e}", file=sys.stderr)
+        return False, "<!doctype html>approval temporarily unavailable"
+
+
 ACTION_RULE_VERSION = 2
 
 
@@ -789,6 +821,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path in ("/v1/health", "/healthz"):
             return self._send(200, {"ok": True}, cache="no-store")
+        # Rate-limit EVERY non-health route up front — including the static
+        # ones below (/, /mcp.json, glama, /outreach/review). Previously these
+        # served before any limiter, so an unauthenticated flood of GET / was
+        # unthrottled; now only /healthz (for uptime monitors) bypasses.
+        ident, ok = self._identity()
+        wait = BUCKETS.take(ident)
+        if wait > 0:
+            return self._send(429, {"error": "rate limited"},
+                              {"Retry-After": str(max(1, int(wait + 0.5)))},
+                              cache="no-store")
         if path == "/":
             if "text/html" in (self.headers.get("Accept") or ""):
                 body = LANDING_HTML.encode()
@@ -802,6 +844,24 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
                 return
             return self._send(200, INDEX)
+        if path == "/outreach/review":
+            # Read-only approval review page. Loading it NEVER sends (email
+            # scanners pre-fetch links); the token is the bearer secret,
+            # emailed only to the operator, and an invalid token gets no
+            # batch contents. (Rate-limited up top, with every route.)
+            token = (parse_qs(urlparse(self.path).query).get("token")
+                     or [""])[0]
+            code, page = _outreach_review(token)
+            body = page.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+            return
         if path == "/mcp.json":
             return self._send(200, MCP_MANIFEST)
         if path == "/.well-known/glama.json":
@@ -810,15 +870,8 @@ class Handler(BaseHTTPRequestHandler):
             # Public contact address only — never a key, never a token.
             return self._send(200, GLAMA_WELL_KNOWN)
 
-        ident, ok = self._identity()
-        # Rate-limit EVERY request (including unauthenticated 401s) BEFORE any
-        # metering — else an anonymous flood fills the usage file unthrottled and
-        # contends the write lock (audit LB-6).
-        wait = BUCKETS.take(ident)
-        if wait > 0:
-            return self._send(429, {"error": "rate limited"},
-                              {"Retry-After": str(max(1, int(wait + 0.5)))},
-                              cache="no-store")
+        # (identity + rate limit already applied at the top of do_GET, so the
+        # anonymous-flood / usage-file abuse guard from LB-6 still holds here.)
         if not ok:
             # x402 lane: no key needed — pay per call on the rail we index.
             payable = path.startswith(("/v1/trust/", "/v1/agent/",
@@ -898,6 +951,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):        # noqa: N802 — MCP streamable-HTTP endpoint
         path = urlparse(self.path).path.rstrip("/")
+        if path == "/outreach/approve":
+            # Records "operator approved the current batch" — nothing more.
+            # No credentials here; a privileged poller on the box does the
+            # actual send. Token (bearer secret from the emailed link) is the
+            # only auth. Rate-limited like everything else.
+            wait = BUCKETS.take(self._identity()[0])
+            if wait > 0:
+                return self._send(429, {"error": "rate limited"},
+                                  cache="no-store")
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                token = parse_qs(self.rfile.read(min(n, 4096)).decode(
+                    "utf-8", "replace")).get("token", [""])[0]
+            except Exception:
+                token = ""
+            ok, page = _outreach_approve(token)
+            body = page.encode()
+            self.send_response(200 if ok else 410)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path != "/mcp":
             return self._send(404, {"error": "not found", "index": "/"},
                               cache="no-store")
@@ -1234,12 +1311,45 @@ def _mcp_tool_call(handler, name: str, args: dict):
     return {"error": f"unknown tool: {name}"}
 
 
+# ThreadingHTTPServer spawns one unbounded thread per connection. The
+# per-identity rate limiter throttles REQUESTS but not concurrent CONNECTIONS,
+# so a burst of slow/held connections (e.g. many hitting the paid lane's
+# facilitator round-trip) could exhaust threads/memory. Cap in-flight worker
+# threads; excess connections are closed immediately (Caddy, the only client
+# since we bind loopback, sees a dropped conn and can 502/retry) — a bounded
+# backstop, not a substitute for a reverse-proxy connection limit.
+MAX_INFLIGHT = int(os.environ.get("TRUST_API_MAX_INFLIGHT", "96"))
+
+
+class _BoundedServer(ThreadingHTTPServer):
+    daemon_threads = True
+    _sem = threading.BoundedSemaphore(MAX_INFLIGHT)
+
+    def process_request(self, request, client_address):
+        if not self._sem.acquire(blocking=False):
+            print("[trust-api] max in-flight reached — shedding a connection",
+                  file=sys.stderr, flush=True)
+            try:
+                self.shutdown_request(request)
+            except Exception:
+                pass
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._sem.release()
+
+
 def main() -> None:
     mode = (f"{len(KEYS)} API key(s)" if KEYS
             else "ANONYMOUS mode (per-IP limits)")
     print(f"[trust-api] {BIND_HOST}:{PORT} · {mode} · {RPM:.0f} rpm "
-          f"burst {BURST:.0f} · usage → {USAGE_PATH}", flush=True)
-    ThreadingHTTPServer((BIND_HOST, PORT), Handler).serve_forever()
+          f"burst {BURST:.0f} · max-inflight {MAX_INFLIGHT} · "
+          f"usage → {USAGE_PATH}", flush=True)
+    _BoundedServer((BIND_HOST, PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

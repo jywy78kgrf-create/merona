@@ -637,10 +637,15 @@
   let W,H,DPR,baseY=0,t0=null,lastT=0;
   const chains=[
     // clean/series are filled from live stats.json (applyInstr -> setSceneData).
-    // The seeds below only shape the first paint before stats land.
-    {key:'base',   n:1074634, clean:1, series:null, light:'#8fdfd4', mid:'#2fb5a8', dark:'#1b7f76', top:'#b9ede6'},
-    {key:'polygon',n:337773,  clean:1, series:null, light:'#bda6f2', mid:'#8a63d8', dark:'#5a3aa8', top:'#d8c9fa'},
-    {key:'solana', n:36558,   clean:1, series:null, light:'#f6c477', mid:'#eda23e', dark:'#b8722a', top:'#fbdda6'},
+    // clean STARTS AT 0 on purpose: before stats land there is no honest pie to
+    // draw, so the disc renders empty (just the glass ring) and fills in once
+    // real volumes arrive. Seeding clean:1 each used to paint a fake equal-thirds
+    // pie whose polygon slice is purple — which is what flickered in/out whenever
+    // the stats fetch was slow or failed. An empty ring is honest; a made-up
+    // purple slice is not.
+    {key:'base',   n:1074634, clean:0, series:null, light:'#8fdfd4', mid:'#2fb5a8', dark:'#1b7f76', top:'#b9ede6'},
+    {key:'polygon',n:337773,  clean:0, series:null, light:'#bda6f2', mid:'#8a63d8', dark:'#5a3aa8', top:'#d8c9fa'},
+    {key:'solana', n:36558,   clean:0, series:null, light:'#f6c477', mid:'#eda23e', dark:'#b8722a', top:'#fbdda6'},
   ];
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), ease=x=>1-Math.pow(1-x,3);
   const backOut=x=>{const c=1.70158; const t=x-1; return 1+(c+1)*t*t*t+c*t*t;};
