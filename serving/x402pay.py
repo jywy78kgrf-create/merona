@@ -47,13 +47,19 @@ def enabled() -> bool:
     return PAYTO is not None
 
 
-def requirements(resource: str, description: str) -> dict:
+def requirements(resource: str, description: str,
+                 price_usd: float | None = None) -> dict:
     """The single accepts-entry we advertise AND verify against — the same
-    dict must be used in both places or the facilitator rightly rejects."""
+    dict must be used in both places or the facilitator rightly rejects.
+
+    price_usd overrides the module-wide PRICE_USD for this one entry (e.g. a
+    route priced differently from the default). None -> PRICE_USD, exactly
+    the prior behavior, so every existing call site is unaffected."""
+    price = PRICE_USD if price_usd is None else price_usd
     return {
         "scheme": "exact",
         "network": NETWORK,
-        "maxAmountRequired": str(int(round(PRICE_USD * 1e6))),
+        "maxAmountRequired": str(int(round(price * 1e6))),
         "resource": resource,
         "description": description,
         "mimeType": "application/json",
@@ -64,15 +70,22 @@ def requirements(resource: str, description: str) -> dict:
     }
 
 
-def payment_required(resource: str, description: str) -> dict:
+def payment_required(resource: str, description: str,
+                     price_usd: float | None = None) -> dict:
     return {"x402Version": 1,
             "error": "payment required",
-            "accepts": [requirements(resource, description)]}
+            "accepts": [requirements(resource, description, price_usd)]}
 
 
-def settle(payment_b64: str, resource: str, description: str):
+def settle(payment_b64: str, resource: str, description: str,
+          price_usd: float | None = None):
     """(ok, receipt_b64_or_None, payer_or_None, client_error_msg).
-    Facilitator errors surface as client-facing strings without internals."""
+    Facilitator errors surface as client-facing strings without internals.
+
+    price_usd MUST match what was advertised in the 402 for this resource —
+    requirements() builds the verify/settle body from it, so a mismatch
+    between what a caller advertised and what it settles at makes the
+    facilitator rightly reject the payment."""
     if not enabled():
         return False, None, None, "x402 not enabled"
     if not payment_b64 or len(payment_b64) > MAX_PAYLOAD:
@@ -84,7 +97,7 @@ def settle(payment_b64: str, resource: str, description: str):
     except (ValueError, binascii.Error, json.JSONDecodeError):
         return False, None, None, "X-PAYMENT is not valid base64 JSON"
 
-    req = requirements(resource, description)
+    req = requirements(resource, description, price_usd)
     body = {"x402Version": 1, "paymentPayload": payload,
             "paymentRequirements": req}
     try:

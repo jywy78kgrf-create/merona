@@ -223,9 +223,36 @@
     border-radius:18px; background:rgba(255,255,255,.86); backdrop-filter:blur(10px);
     box-shadow:0 18px 44px rgba(38,32,41,.16), 0 2px 8px rgba(38,32,41,.08);
     padding:14px 18px;
+    /* the sheet grows UPWARD from the card, and the desktop page cannot
+       scroll (body overflow:hidden) — anything past the viewport top would be
+       unreachable forever. --dmax (set by JS on open = space above the card)
+       caps the sheet; the inner .dbody scrolls. Scroll lives on .dbody, not
+       here, so the ::after pointer arrow isn't clipped by the scroller. */
+    display:flex; flex-direction:column; max-height:var(--dmax, none);
     opacity:0; transform:translateY(18px) scale(.985); transform-origin:bottom center;
     pointer-events:none; visibility:hidden;
     transition:transform .5s cubic-bezier(.22,1.15,.3,1), opacity .32s ease, visibility 0s linear .32s}
+  .detail .dbody{min-height:0; overflow-y:auto; overscroll-behavior:contain;
+    scrollbar-width:thin; scrollbar-color:rgba(38,32,41,.25) transparent;
+    margin-right:-10px; padding-right:10px}
+  .detail .dbody::-webkit-scrollbar{width:6px}
+  .detail .dbody::-webkit-scrollbar-thumb{background:rgba(38,32,41,.22);
+    border-radius:3px}
+  /* MOBILE: the floating sheet has nowhere to float — cards sit near the top
+     of a scrollable page, so an upward popover is unreachable by construction.
+     Become an accordion instead: expand IN FLOW inside the card, push the page
+     down, let the page's own scroll do the work. (The desktop constraint —
+     card height never changes so the canvas field stays still — doesn't apply:
+     the decorative scene is dropped on phones anyway.) */
+  @media(max-width:940px){
+    .detail{position:static; display:none; opacity:1; visibility:visible;
+      transform:none; pointer-events:auto; max-height:none;
+      margin-top:12px; box-shadow:0 6px 20px rgba(38,32,41,.10)}
+    .card.open .detail{display:flex}
+    .detail::after{display:none}                /* no pointer nub in-flow */
+    .detail .dbody{overflow:visible; max-height:none;
+      margin-right:0; padding-right:0}
+  }
   .card.open .detail{opacity:1; transform:translateY(0) scale(1);
     pointer-events:auto; visibility:visible; transition-delay:0s}
   .detail::after{content:''; position:absolute; top:calc(100% - 1px); left:50%; transform:translateX(-50%);
@@ -397,6 +424,12 @@
     color:var(--ink);transition:transform .2s ease,box-shadow .2s ease;min-width:0;
     display:flex;flex-direction:column}
   .ptile:hover{transform:translateY(-2px);box-shadow:0 14px 38px rgba(38,32,41,.18)}
+  /* stretched-link pattern: the card body is one link (mismatch feed), while
+     the agent-gate line links to its own docs — anchors can't nest, so the
+     card link is an absolutely-stretched sibling under the row links */
+  .stretch{position:absolute;inset:0;z-index:1;border-radius:inherit}
+  .sublink{position:relative;z-index:2;color:inherit;text-decoration:none}
+  .sublink:hover{text-decoration:underline}
   .ptile .pk{display:flex;align-items:center;gap:7px;font-family:var(--mono);
     font-size:9px;letter-spacing:.18em;color:#6d6479;font-weight:600}
   .ptile .pdot{width:8px;height:8px;border-radius:2px;transform:rotate(45deg);flex:none}
@@ -480,15 +513,17 @@
 <!-- free payTo-integrity check — floating in the sky band, centered on the
      lens sphere's midline; whole card links to the feed. Hidden below 1100px
      (mobile HUD stays clean; the footer link still carries the feed there). -->
-<a class="freecard" href="/mismatches">
+<div class="freecard">
+  <a class="stretch" href="/mismatches" aria-label="payTo mismatch feed"></a>
   <div class="fc-kick"><span class="fc-dia"></span>FREE · PAYTO INTEGRITY</div>
   <h3>Safe to pay? Check first.</h3>
   <p>The payout wallet an endpoint advertises vs what it actually asks for —
   probed nightly, on-chain history attached.</p>
   <div class="fc-u"><span class="fc-l">ONE-SHOT</span><span class="fc-v">merona.io/check?q=wallet</span></div>
   <div class="fc-u"><span class="fc-l">BULK</span><span class="fc-v">merona.io/mismatches.json</span></div>
+  <div class="fc-u"><span class="fc-l">AGENT GATE</span><span class="fc-v"><a class="sublink" href="https://api.merona.io/#evaluate">POST /v1/trust/evaluate</a></span></div>
   <div class="fc-ft"><b>FREE</b> · NO KEY · NO SIGNUP</div>
-</a>
+</div>
 
 <main>
   <div class="deck">
@@ -506,7 +541,7 @@
         <div class="q br"><div class="num muted" data-f="base.gross">$61.5M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
       <div class="rflag" data-f="base.review"></div>
-      <div class="detail"><div class="ladder"></div><div class="dchart" data-dc="base"></div></div>
+      <div class="detail"><div class="dbody"><div class="ladder"></div><div class="dchart" data-dc="base"></div></div></div>
     </article>
 
     <article class="card poly" data-chain="polygon">
@@ -522,7 +557,7 @@
         </div></div>
         <div class="q br"><div class="num muted" data-f="polygon.gross">$9.7M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
-      <div class="detail"><div class="rflag note" data-f="polygon.review">Restated 2026-08-01 — a 3-hop payment ring (~$149K across 32 wallets) is excluded from the clean figure via the published flags file. Found by our payer-side trace after our own 2-hop filters passed it; the correction is recorded, not buried. Evidence: docs/report/polygon_attribution_draft.md</div><div class="ladder"></div><div class="dchart" data-dc="polygon"></div></div>
+      <div class="detail"><div class="dbody"><div class="rflag note" data-f="polygon.review">Restated 2026-08-01 — a 3-hop payment ring (~$149K across 32 wallets) is excluded from the clean figure via the published flags file. Found by our payer-side trace after our own 2-hop filters passed it; the correction is recorded, not buried. Evidence: docs/report/polygon_attribution_draft.md</div><div class="ladder"></div><div class="dchart" data-dc="polygon"></div></div></div>
     </article>
 
     <article class="card sol" data-chain="solana">
@@ -539,30 +574,34 @@
         <div class="q br"><div class="num muted" data-f="solana.gross">16.4M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
       <div class="rflag" data-f="solana.review"></div>
-      <div class="detail"><div class="ladder"></div><div class="dchart" data-dc="solana"></div></div>
+      <div class="detail"><div class="dbody"><div class="ladder"></div><div class="dchart" data-dc="solana"></div></div></div>
     </article>
   </div>
 </main>
 
 <div class="prodband">
-  <a class="ptile" href="/mismatches">
+  <div class="ptile">
+    <a class="stretch" href="/mismatches" aria-label="payTo mismatch feed"></a>
     <div class="pk"><span class="pdot t"></span>FREE CHECK</div>
     <div class="pt">Safe to pay? Check first.</div>
     <div class="pl">merona.io/check?q=<span class="dim">wallet</span> · bulk: merona.io/mismatches.json</div>
-    <div class="pf">payTo integrity · nightly · no key</div>
-  </a>
+    <div class="pl">agent gate: <a class="sublink" href="https://api.merona.io/#evaluate">POST api.merona.io/v1/trust/evaluate</a></div>
+    <div class="pf">payTo integrity · PASS/FAIL trust gate · no key</div>
+  </div>
   <a class="ptile" href="https://api.merona.io/">
     <div class="pk"><span class="pdot v"></span>MCP FOR AGENTS</div>
     <div class="pt">Wire merona into your agent.</div>
     <div class="pl">POST api.merona.io/mcp · manifest: <span class="dim">/mcp.json</span></div>
     <div class="pf">4 tools · free payTo checks · paid m.Scores · zero-install</div>
   </a>
-  <a class="ptile" href="https://api.merona.io/">
+  <div class="ptile">
+    <a class="stretch" href="https://api.merona.io/" aria-label="m.Score API"></a>
     <div class="pk"><span class="pdot o"></span>m.SCORE API</div>
     <div class="pt">Wash-aware trust scores.</div>
     <div class="pl"><b>$0.005/call via x402</b> · <span class="dim">or keys:</span> api.merona.io</div>
+    <div class="pl">pro: bulk + history + 10× rate · <a class="sublink" href="https://api.merona.io/#pro">$300/mo</a></div>
     <div class="pf">grades A–F · cycle-detected · snapshot-verifiable</div>
-  </a>
+  </div>
 </div>
 
 <div class="ledger evidence">
@@ -628,7 +667,7 @@
   </div>
 </div>
 
-<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5" target="_blank" rel="noopener">On-chain anchors</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
+<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5" target="_blank" rel="noopener">On-chain anchors</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="https://smithery.ai/servers/michaelfitz/merona" target="_blank" rel="noopener">MCP on Smithery</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
 
 <script>
 (() => {
@@ -887,13 +926,32 @@
 
   // ---- card details: glass sheet rises above the card (card height never
   // changes, so the canvas field stays perfectly still underneath) ----
+  // capDetail: the sheet is anchored to the card's top and grows upward, but
+  // the desktop page can't scroll — so on short windows its top escaped the
+  // viewport with no way to reach it. Fit it to the space that exists
+  // (card top minus margins, floor 180px) and let .dbody scroll the rest.
+  const _stackedMQ=matchMedia('(max-width:940px)');
+  const capDetail=c=>{
+    if(_stackedMQ.matches) return;   // mobile: in-flow accordion, no cap
+    const d=c.querySelector('.detail'); if(!d) return;
+    d.style.setProperty('--dmax',
+      Math.max(180, Math.floor(c.getBoundingClientRect().top)-24)+'px');
+  };
   document.querySelectorAll('.card').forEach(card=>{
     card.querySelector('.chev').addEventListener('click',()=>{
       const opening=!card.classList.contains('open');
       document.querySelectorAll('.card.open').forEach(c=>{ if(c!==card) c.classList.remove('open'); });
+      if(opening) capDetail(card);
       card.classList.toggle('open',opening);
+      // mobile accordion: the sheet expands DOWNWARD in flow — nudge it into
+      // view so the tap visibly answers (block:nearest = minimal scroll)
+      if(opening && _stackedMQ.matches){
+        const d=card.querySelector('.detail');
+        if(d) setTimeout(()=>d.scrollIntoView({behavior:'smooth',block:'nearest'}),60);
+      }
     });
   });
+  addEventListener('resize',()=>document.querySelectorAll('.card.open').forEach(capDetail));
 
   // ---- probe search: live /probe endpoint (indexed lookups on the box);
   // the seed list only answers when the endpoint is unreachable (offline/static)

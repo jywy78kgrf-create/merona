@@ -57,6 +57,10 @@ from storage import open_store                      # noqa: E402
 PORT = int(os.environ.get("TRUST_API_PORT", "8402"))
 RPM = float(os.environ.get("TRUST_API_RPM", "60"))
 BURST = float(os.environ.get("TRUST_API_BURST", "20"))
+# Pro tier: a SEPARATE token-bucket pool, so pro traffic and everyone else's
+# free/keyed traffic never compete for the same tokens in either direction.
+PRO_RPM = float(os.environ.get("TRUST_API_PRO_RPM", "600"))
+PRO_BURST = float(os.environ.get("TRUST_API_PRO_BURST", "120"))
 USAGE_PATH = Path(os.environ.get(
     "TRUST_API_USAGE", str(ROOT / "serving" / "trust_api_usage.jsonl")))
 SNAP_DIR = ROOT / "data" / "indexer" / "snapshots"
@@ -108,6 +112,16 @@ def _load_keys() -> dict:
 KEYS = _load_keys()
 
 
+def _is_pro(name: str | None) -> bool:
+    """Pro tier rides in the freeform CONFIGURED name of a key ("pro:acme"),
+    set by the operator in TRUST_API_KEYS / TRUST_API_KEYS_FILE — e.g.
+    "abc123:pro:acme" (env) or "abc123,pro:acme" (keys-file line). This is
+    the ONLY input: never derived from anything the client sends, so a
+    request cannot forge its own tier by sending a key value that merely
+    looks pro-shaped — it must be a key this server was configured with."""
+    return bool(name) and name.startswith("pro:")
+
+
 # --- rate limiting (token bucket per identity) ---------------------------------
 class _Buckets:
     def __init__(self, rpm: float, burst: float):
@@ -142,6 +156,10 @@ class _Buckets:
 
 
 BUCKETS = _Buckets(RPM, BURST)
+# Pro identities (key name starting "pro:") draw from this pool instead of
+# BUCKETS — non-pro traffic never touches it and vice versa (product spec:
+# 600 rpm / 120 burst default, 10x the free/keyed default).
+PRO_BUCKETS = _Buckets(PRO_RPM, PRO_BURST)
 # Trust X-Forwarded-For only when the peer is the local reverse proxy (Caddy).
 # Anything else lets a client spoof its own rate-limit identity (audit LB-6).
 TRUST_PROXY = os.environ.get("TRUST_API_TRUST_PROXY", "1") == "1"
@@ -157,6 +175,12 @@ import x402pay  # noqa: E402
 PUBLIC_BASE = os.environ.get("TRUST_API_PUBLIC_URL",
                              "https://api.merona.io").rstrip("/")
 PAY_DESC = "merona m.Score lookup — wash-aware x402 trust data"
+# per-seller delivery evidence is priced separately (deeper than a score
+# lookup: latest state + full paid-probe history) — double PRICE_USD by
+# default, independently tunable via its own env var.
+DELIVERY_PRICE_USD = float(os.environ.get("X402_PRICE_DELIVERY_USD", "0.01"))
+DELIVERY_PAY_DESC = ("merona delivery evidence — genuine-payer probe "
+                     "history with settlement txs")
 # mismatch feed (free MCP tools read it; same file the dashboard serves)
 FEED_PATH = Path(os.environ.get(
     "X402_FEED_PATH", str(ROOT / "data" / "indexer" / "payto_mismatches.json")))
@@ -181,7 +205,8 @@ def _feed():
 RECEIPTS_PATH = Path(os.environ.get(
     "X402_RECEIPTS_PATH",
     str(ROOT / "data" / "indexer" / "payprobe" / "receipts.jsonl")))
-_delivery_cache = {"mtime": None, "states": {}}
+_delivery_cache = {"mtime": None, "states": {}, "history": {}}
+_DELIVERY_HISTORY_CAP = 200
 _RECEIPT_CHAINS = {"base": "base", "eip155:8453": "base",
                    "polygon": "polygon", "eip155:137": "polygon"}
 
@@ -228,19 +253,76 @@ def _delivery_states(lines) -> dict:
     return out
 
 
-def _delivery(chain: str, address: str) -> dict | None:
+def _delivery_history_states(lines) -> dict:
+    """{(chain, payto): [probe dicts, newest-first, capped at
+    _DELIVERY_HISTORY_CAP]} — every parsed receipt row (any outcome, not
+    just the settled ones _delivery_states collapses to a latest state),
+    built from the same lines _delivery_states parses so the two together
+    still cost exactly one read of receipts.jsonl per mtime change (see
+    _delivery_map)."""
+    rows = []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        chain = _RECEIPT_CHAINS.get(str(r.get("network", "")).lower())
+        if not chain or not r.get("pay_to"):
+            continue
+        rows.append((str(r.get("ts") or ""), chain, r))
+    rows.sort(key=lambda row: row[0])
+    out: dict = {}
+    for ts, chain, r in reversed(rows):
+        key = (chain, r["pay_to"].lower())
+        bucket = out.setdefault(key, [])
+        if len(bucket) >= _DELIVERY_HISTORY_CAP:
+            continue
+        amount = r.get("amount_base_units")
+        bucket.append({
+            "ts": ts,
+            "outcome": r.get("outcome"),
+            "http_status": r.get("http_status"),
+            "url": r.get("url"),
+            "amount_usdc": (round(amount / 1e6, 6)
+                            if isinstance(amount, (int, float)) else None),
+            "settlement_tx": (r.get("settlement") or {}).get("transaction"),
+        })
+    return out
+
+
+def _delivery_map() -> dict:
+    """Refresh _delivery_cache from RECEIPTS_PATH iff its mtime changed, and
+    return the full {(chain, payto): state} map. The single reader of
+    receipts.jsonl — _delivery() (one seller), pro_delivery() (bulk, a whole
+    chain), and _delivery_history_map() (per-seller probe history) all call
+    through here (directly or via _delivery_history_map) rather than
+    re-reading the file. Each mtime-triggered refresh reads the file once and
+    derives both the states map and the history map from those same lines."""
     try:
         m = RECEIPTS_PATH.stat().st_mtime
     except OSError:
-        return None
+        return {}
     if _delivery_cache["mtime"] != m:
         try:
-            _delivery_cache["states"] = _delivery_states(
-                RECEIPTS_PATH.read_text().splitlines())
+            lines = RECEIPTS_PATH.read_text().splitlines()
+            _delivery_cache["states"] = _delivery_states(lines)
+            _delivery_cache["history"] = _delivery_history_states(lines)
             _delivery_cache["mtime"] = m
         except Exception:
             pass
-    return _delivery_cache["states"].get((chain, address.lower()))
+    return _delivery_cache["states"]
+
+
+def _delivery_history_map() -> dict:
+    """{(chain, payto): [probe history]} — refreshed by the same mtime-cache
+    pass as _delivery_map(); calling it here ensures a cold/stale cache gets
+    (re)built before we read the history half of it."""
+    _delivery_map()
+    return _delivery_cache["history"]
+
+
+def _delivery(chain: str, address: str) -> dict | None:
+    return _delivery_map().get((chain, address.lower()))
 
 
 # Rotate the usage file once instead of growing without bound (audit LB-6): at
@@ -448,6 +530,16 @@ def _outreach_review(token: str) -> tuple[int, str]:
         return 500, "<!doctype html>approval temporarily unavailable"
 
 
+def _outreach_worklist(token: str) -> tuple[int, str]:
+    """GET /outreach/worklist — read-only view of the standing to-do list.
+    Bookmarkable; token-gated; never sends."""
+    try:
+        return _approve_mod().worklist_html(token)
+    except Exception as e:
+        print(f"[trust-api] outreach worklist error: {e}", file=sys.stderr)
+        return 500, "<!doctype html>worklist temporarily unavailable"
+
+
 def _outreach_approve(token: str) -> tuple[bool, str]:
     """POST /outreach/approve — record approval only; no send here."""
     try:
@@ -620,6 +712,208 @@ def trust_lookup(chain: str, address: str) -> tuple[int, dict]:
     return 200, resp
 
 
+# --- POST /v1/trust/evaluate ----------------------------------------------------
+# x402 "trust provider" gate decision: x402-trust-query-v0.1 in,
+# x402-trust-evaluation-v0.1 out (x402-foundation/x402 #2299), plus a
+# `direction` extension (seller/buyer). This maps merona's EXISTING data
+# (trust_lookup — the same function GET /v1/trust/{chain}/{address} calls —
+# and its _delivery/_suggested_action machinery) to PASS/FAIL/UNCERTAIN. It
+# never computes a new score and never invents one: absent evidence is
+# UNCERTAIN with score null, never a guess.
+TRUST_EVALUATE_MAX_BODY = 16384
+_EVAL_SUPPORTED_CHAINS = {"base", "polygon", "solana"}
+_EVAL_CHAIN_ALIASES = {"eip155:8453": "base", "eip155:137": "polygon"}
+# letter -> score used ONLY when no numeric score exists at all (e.g. a bare
+# adverse-finding override with score=None); otherwise the real number wins.
+_EVAL_GRADE_SCORE = {"A": 0.9, "B": 0.75, "C": 0.55, "D": 0.4, "F": 0.15}
+EVAL_DEFAULT_TTL = 21600     # 6h: seller_scores/delivery refresh roughly nightly
+EVAL_CHARGED_TTL = 3600      # short: the very next paid probe can clear this
+EVAL_DISCLAIMER = (
+    "This decision reflects recorded facts with dates, re-derivable from the "
+    "anchored snapshot referenced in evidence_uri; it is not an accusation "
+    "or an endorsement of either party.")
+
+
+def _eval_score(raw_score, grade) -> float | None:
+    """Normalize whatever numeric score trust_lookup returned to 0-1 (the
+    stored score is 0-100). Falls back to a fixed letter->score map ONLY when
+    no numeric score exists; returns None (never a guess) when neither does."""
+    if raw_score is not None:
+        try:
+            return round(max(0.0, min(1.0, float(raw_score) / 100.0)), 4)
+        except (TypeError, ValueError):
+            pass
+    return _EVAL_GRADE_SCORE.get(str(grade or "").upper())
+
+
+def _eval_chain(raw) -> str | None:
+    if not raw:
+        return None
+    c = str(raw).strip().lower()
+    return _EVAL_CHAIN_ALIASES.get(c, c)
+
+
+def _eval_result(direction: str, decision: str, score, reason_code: str,
+                 basis: list, evidence_uri, evidence: dict, ttl: int) -> dict:
+    return {
+        "schema": "x402-trust-evaluation-v0.1",
+        "decision": decision,
+        "score": score,
+        "reason_code": reason_code,
+        "direction": direction,
+        "basis": basis,
+        "evidence_uri": evidence_uri,
+        "evidence": evidence,
+        "ttl": ttl,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "provider": "merona",
+        "disclaimer": EVAL_DISCLAIMER,
+    }
+
+
+def _eval_base_evidence(record: dict) -> tuple[dict, str | None]:
+    """Small evidence object + evidence_uri from trust_lookup's own
+    `verification` block. Never invents a hash: no on-host snapshot file (or
+    no verification block at all, e.g. an unscored wallet) -> no evidence_uri."""
+    verification = record.get("verification") or {}
+    sha = verification.get("snapshot_sha256")
+    ev = {}
+    if verification.get("snapshot_date"):
+        ev["snapshot_date"] = verification["snapshot_date"]
+    if verification.get("anchors"):
+        ev["anchors"] = verification["anchors"]
+    return ev, (f"sha256:{sha}" if sha else None)
+
+
+def _eval_charged_unserved(delivery: dict, record: dict) -> dict:
+    ev, uri = _eval_base_evidence(record)
+    if delivery.get("settlement_tx"):
+        ev["settlement_tx"] = delivery["settlement_tx"]
+    if delivery.get("http_status") is not None:
+        ev["http_status"] = delivery["http_status"]
+    grade = record.get("grade")
+    score = _eval_score(record.get("score"), grade) if grade else None
+    return _eval_result("seller", "FAIL", score, "charged_unserved",
+                        ["first_party_probe"], uri, ev, EVAL_CHARGED_TTL)
+
+
+def _evaluate_seller_record(status: int, record: dict) -> dict:
+    """Pure: maps an already-fetched trust_lookup() result (its 200 body, or
+    its 404 error body — both may carry `delivery`) to the
+    x402-trust-evaluation-v0.1 wire shape. No I/O of its own — the DB call
+    already happened in trust_lookup() — so this is directly unit-testable
+    with hand-built records, matching the rule order in the spec:
+      1. charged_unserved (checked first, regardless of grade/status —
+         receipt-proven and the most perishable signal)
+      2. suggested_action DECLINE
+      3. delivery_verified + grade A/B
+      4. grade alone (A/B pass, C/D marginal, bare F -> decline)
+      5. no grade at all -> insufficient_evidence
+    """
+    record = record or {}
+    delivery = record.get("delivery") or {}
+
+    if delivery.get("status") == "charged_unserved":
+        return _eval_charged_unserved(delivery, record)
+
+    if status != 200:
+        # unknown wallet (404, no charged_unserved receipt) or a backend
+        # error shape reaching here some other way: nothing to score.
+        return _eval_result("seller", "UNCERTAIN", None,
+                            "insufficient_evidence", [], None, {},
+                            EVAL_DEFAULT_TTL)
+
+    grade = str(record.get("grade") or "").upper() or None
+    suggested = record.get("suggested_action") or {}
+    ev, uri = _eval_base_evidence(record)
+
+    if suggested.get("action") == "DECLINE":
+        score = _eval_score(record.get("score"), grade)
+        return _eval_result("seller", "FAIL", score, "grade_decline",
+                            ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+
+    if delivery.get("status") == "delivery_verified" and grade in ("A", "B"):
+        score = _eval_score(record.get("score"), grade)
+        return _eval_result("seller", "PASS", score, "delivery_verified",
+                            ["first_party_probe", "behavioral"], uri, ev,
+                            EVAL_DEFAULT_TTL)
+
+    if grade:
+        score = _eval_score(record.get("score"), grade)
+        if grade in ("A", "B"):
+            return _eval_result("seller", "PASS", score, "grade_pass",
+                                ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+        if grade in ("C", "D"):
+            return _eval_result("seller", "UNCERTAIN", score, "grade_marginal",
+                                ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+        # bare F with no DECLINE action (e.g. still provisional) — still FAIL
+        return _eval_result("seller", "FAIL", score, "grade_decline",
+                            ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+
+    # no grade, no delivery record: unknown/unrated wallet
+    return _eval_result("seller", "UNCERTAIN", None, "insufficient_evidence",
+                        [], None, {}, EVAL_DEFAULT_TTL)
+
+
+def _trust_evaluate(body: bytes, lookup=None) -> tuple[int, dict]:
+    """POST /v1/trust/evaluate. Free (no x402 payment lane — that only
+    exists in do_GET's payable-prefix branch, which this never touches) and
+    HTTP 200 for every well-formed query; the decision lives in the body.
+
+    `lookup` defaults to the module's own trust_lookup() — the exact function
+    the existing GET route calls — but is overridable so the mapping logic
+    stays unit-testable without a running server or a live DB.
+    """
+    lookup = lookup or trust_lookup
+    try:
+        req = json.loads(body.decode("utf-8")) if body else {}
+        if not isinstance(req, dict):
+            raise ValueError("body must be a JSON object")
+    except Exception:
+        return 400, {"error": "malformed JSON body"}
+
+    direction = "buyer" if str(req.get("direction") or "").strip().lower() \
+        == "buyer" else "seller"
+    if direction == "buyer":
+        # Honest: merona doesn't score payers yet (agent_lookup is a
+        # different, richer thing than a pass/fail gate — see its docstring).
+        return 200, _eval_result("buyer", "UNCERTAIN", None,
+                                 "payer_scoring_not_available", [], None, {},
+                                 EVAL_DEFAULT_TTL)
+
+    subject = req.get("subject") if isinstance(req.get("subject"), dict) else {}
+    resource = req.get("resource") if isinstance(req.get("resource"), dict) else {}
+    amount = (resource.get("amount")
+              if isinstance(resource.get("amount"), dict) else {})
+
+    wallet = subject.get("wallet")
+    wallet = str(wallet).strip() if wallet else ""
+    if not wallet:
+        return 200, _eval_result("seller", "UNCERTAIN", None,
+                                 "unknown_subject", [], None, {},
+                                 EVAL_DEFAULT_TTL)
+
+    chain = _eval_chain(subject.get("chain") or amount.get("chain"))
+    if chain not in _EVAL_SUPPORTED_CHAINS:
+        return 200, _eval_result("seller", "UNCERTAIN", None,
+                                 "unsupported_chain", [], None, {},
+                                 EVAL_DEFAULT_TTL)
+
+    if _HEX_ADDR.match(wallet):
+        addr = wallet.lower()
+    elif _B58_ADDR.match(wallet):
+        addr = wallet
+    else:
+        # Not a recognizable address on this chain — liberal parsing: this is
+        # "no subject we can resolve", not a 400.
+        return 200, _eval_result("seller", "UNCERTAIN", None,
+                                 "unknown_subject", [], None, {},
+                                 EVAL_DEFAULT_TTL)
+
+    status, record = lookup(chain, addr)
+    return 200, _evaluate_seller_record(status, record)
+
+
 def endpoint_lookup(origin: str) -> tuple[int, dict]:
     origin = (origin or "").strip().rstrip("/")
     if not origin or len(origin) > 300:
@@ -653,6 +947,131 @@ def endpoint_lookup(origin: str) -> tuple[int, dict]:
     return 200, resp
 
 
+# --- Pro tier: bulk + history endpoints (GET, JSON, no x402 lane) --------------
+# Gated on a pro key (see _is_pro / Handler._identity), never on payment — the
+# do_GET payable-prefix tuple ("/v1/trust/", "/v1/agent/", "/v1/endpoint")
+# does not and must not include "/v1/pro/".
+PRO_SCORES_HISTORY_DEFAULT_LIMIT = 90
+PRO_SCORES_HISTORY_MAX_LIMIT = 365
+_PRO_SELLER_COLS = ("seller", "score", "grade", "provisional", "tx_count",
+                    "unique_payers", "self_pay_ratio", "measured_date",
+                    "snapshot_date")
+
+
+def pro_scores(chain: str) -> tuple[int, dict]:
+    """Every seller's LATEST seller_scores row for `chain`. The nightly
+    writer (scores.compute_seller_scores) scores every seller for a chain in
+    one run under a single `date`, so all sellers in a batch share
+    measured_date — the simpler latest-BATCH query (one MAX subquery per
+    chain) is exact here, not an approximation of a true per-seller window."""
+    if chain not in _EVAL_SUPPORTED_CHAINS:
+        return 400, {"error": "bad chain"}
+    rows = _query(
+        "SELECT seller, score, grade, provisional, tx_count, unique_payers, "
+        "self_pay_ratio, measured_date, snapshot_date FROM seller_scores "
+        "WHERE chain=? AND measured_date=(SELECT MAX(measured_date) FROM "
+        "seller_scores WHERE chain=?) ORDER BY seller", (chain, chain))
+    sellers = [dict(zip(_PRO_SELLER_COLS, r)) for r in rows]
+    for s in sellers:
+        s["provisional"] = bool(s["provisional"])
+    snap = rows[0][8] if rows else None
+    return 200, {
+        "chain": chain, "count": len(sellers), "sellers": sellers,
+        # re-derivability travels with the bulk data too, same block the
+        # single-seller lookups expose (_verification) — never a new hash.
+        "snapshot": _verification(snap) if snap else None,
+    }
+
+
+def pro_scores_history(chain: str, address: str, limit_raw) -> tuple[int, dict]:
+    """Full seller_scores time series for one seller, newest first. Address
+    validation is identical to trust_lookup's (_HEX_ADDR/_B58_ADDR, lowercase
+    hex) — the same rule, not a re-derived one."""
+    if chain not in _EVAL_SUPPORTED_CHAINS:
+        return 400, {"error": "bad chain"}
+    if _HEX_ADDR.match(address):
+        address = address.lower()
+    elif not _B58_ADDR.match(address):
+        return 400, {"error": "bad address"}
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = PRO_SCORES_HISTORY_DEFAULT_LIMIT
+    limit = max(1, min(PRO_SCORES_HISTORY_MAX_LIMIT, limit))
+    rows = _query(
+        "SELECT seller, score, grade, provisional, tx_count, unique_payers, "
+        "self_pay_ratio, measured_date, snapshot_date FROM seller_scores "
+        "WHERE chain=? AND seller=? ORDER BY measured_date DESC LIMIT ?",
+        (chain, address, limit))
+    history = [dict(zip(_PRO_SELLER_COLS, r)) for r in rows]
+    for h in history:
+        h["provisional"] = bool(h["provisional"])
+    return 200, {"chain": chain, "seller": address, "count": len(history),
+                "limit": limit, "history": history}
+
+
+def pro_delivery(chain: str) -> tuple[int, dict]:
+    """The full delivery-state map for a chain, from the same cached loader
+    _delivery() uses (_delivery_map) — receipts.jsonl is read exactly once,
+    never re-parsed here."""
+    if chain not in _EVAL_SUPPORTED_CHAINS:
+        return 400, {"error": "bad chain"}
+    states = _delivery_map()
+    sellers = {addr: state for (c, addr), state in states.items()
+              if c == chain}
+    return 200, {"chain": chain, "count": len(sellers), "sellers": sellers}
+
+
+DELIVERY_DISCLAIMER = (
+    "dated facts from real paid probes, re-derivable from the anchored "
+    "snapshot; probes repeat and newer outcomes supersede older ones")
+
+
+def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
+    """Per-seller genuine-payer delivery evidence: the LATEST delivery state
+    (the same block trust_lookup's `delivery` field carries, via _delivery())
+    plus the FULL paid-probe history with settlement txs (_delivery_history_
+    map(), the history half of the same cached receipts.jsonl reader
+    _delivery()/pro_delivery() use — no separate parse). This is per-seller
+    depth; GET /v1/pro/delivery is the bulk latest-state-only counterpart.
+
+    Chain validation matches /v1/trust/evaluate (_EVAL_SUPPORTED_CHAINS —
+    base/polygon/solana, exact set); address validation is identical to
+    trust_lookup's (_HEX_ADDR lowercased / _B58_ADDR)."""
+    if chain not in _EVAL_SUPPORTED_CHAINS:
+        return 400, {"error": "bad chain"}
+    if _HEX_ADDR.match(address):
+        address = address.lower()
+    elif not _B58_ADDR.match(address):
+        return 400, {"error": "bad address"}
+    probes = _delivery_history_map().get((chain, address)) or []
+    if not probes:
+        return 404, {"error": "no paid delivery probes recorded for this seller"}
+    counts: dict = {}
+    for p in probes:
+        counts[p["outcome"]] = counts.get(p["outcome"], 0) + 1
+    # Same provenance rule as trust_lookup: the seller's own latest scored
+    # snapshot, if any — never a fabricated hash for a seller never scored.
+    rows = _query(
+        "SELECT snapshot_date FROM seller_scores WHERE chain=? AND seller=? "
+        "ORDER BY measured_date DESC LIMIT 1", (chain, address))
+    snap = rows[0][0] if rows else None
+    return 200, {
+        "chain": chain, "seller": address,
+        "delivery": _delivery(chain, address),
+        "probes": probes,
+        "counts": counts,
+        "verification": _verification(snap),
+        "disclaimer": DELIVERY_DISCLAIMER,
+    }
+
+
+def _pro_forbidden() -> tuple[int, dict]:
+    return 403, {"error": "pro tier required",
+                "pricing": "https://api.merona.io/#pro",
+                "contact": "hello@merona.io"}
+
+
 INDEX = {
     "service": "m.Score API",
     "endpoints": {
@@ -661,7 +1080,20 @@ INDEX = {
                                            "UNKNOWN rather than inventing a "
                                            "score for an unseen wallet",
         "GET /v1/endpoint?origin=URL": "endpoint reliability grade",
+        "GET /v1/delivery/{chain}/{address}": "per-seller genuine-payer "
+                                              "delivery evidence: latest "
+                                              "state + full paid-probe "
+                                              "history with settlement txs",
         "GET /v1/health": "liveness",
+        "POST /v1/trust/evaluate": "x402 trust-provider PASS/FAIL/UNCERTAIN "
+                                   "gate decision (x402-trust-query-v0.1); "
+                                   "free, no key or payment required",
+        "GET /v1/pro/scores?chain=": "every seller's latest score for a "
+                                     "chain, bulk (pro)",
+        "GET /v1/pro/scores/history?chain=&address=&limit=": "full score "
+                                     "time series for one seller (pro)",
+        "GET /v1/pro/delivery?chain=": "delivery-state map (paid-probe "
+                                       "evidence) for a chain, bulk (pro)",
     },
     "mcp": {"endpoint": "POST /mcp (streamable HTTP)",
             "manifest": "GET /mcp.json",
@@ -720,10 +1152,11 @@ nav.topnav a.on{color:var(--teal)}
 
 <nav class="topnav" aria-label="site navigation"><a href="https://merona.io/">INDEX</a><a href="https://merona.io/mismatches">FREE CHECK</a><a href="https://merona.io/findings">FINDINGS</a><a class="on" href="/">API</a></nav>
 
-<h2>Scores — $0.005/call via x402, or an API key</h2>
+<h2>Scores $0.005 &#183; delivery evidence $0.01 — via x402, or an API key</h2>
 <div class="ep"><code>GET /v1/trust/{chain}/{address}</code><span>seller trust score (0&#8211;100, A&#8211;F)</span><span class="paid">paid</span></div>
 <div class="ep"><code>GET /v1/agent/{chain}/{address}</code><span>payer/agent score — UNKNOWN if unseen</span><span class="paid">paid</span></div>
 <div class="ep"><code>GET /v1/endpoint?origin=URL</code><span>endpoint reliability grade</span><span class="paid">paid</span></div>
+<div class="ep"><code>GET /v1/delivery/{chain}/{address}</code><span>per-seller delivery evidence — latest state + full paid-probe history</span><span class="paid">$0.01</span></div>
 <div class="ep"><code>GET /v1/health</code><span>liveness</span></div>
 
 <h2>Pay per call — no key, no signup</h2>
@@ -731,9 +1164,37 @@ nav.topnav a.on{color:var(--teal)}
 <b># -&gt; 402 + payment instructions (x402 exact scheme, Base USDC)</b>
 <b># retry with X-PAYMENT; receipt returned in X-PAYMENT-RESPONSE</b></pre>
 
+<h2 id="evaluate">Agent gate — free · x402 trust-provider</h2>
+<div class="ep"><code>POST /v1/trust/evaluate</code><span>PASS / FAIL / UNCERTAIN
+before an agent pays — x402-trust-query-v0.1 in, x402-trust-evaluation-v0.1
+out, <code>direction: seller</code></span></div>
+<pre>curl -sX POST https://api.merona.io/v1/trust/evaluate \\
+  -H 'content-type: application/json' \\
+  -d '{"schema":"x402-trust-query-v0.1","direction":"seller",
+       "subject":{"wallet":"0xSELLER","chain":"base"}}'
+<b># FAIL only on receipt-proven facts — the settlement tx ships in `evidence`</b>
+<b># unknown sellers return score:null with a reason, never a fabricated number</b>
+<b># evidence_uri is content-addressed (sha256: nightly anchored snapshot)</b></pre>
+<p class="tag">Implements the trust-provider extension proposed in
+<a href="https://github.com/x402-foundation/x402/issues/2299">x402#2299</a> —
+the seller direction: merona actually pays sellers and records whether they
+deliver. Chains: base · polygon · solana.</p>
+
+<h2 id="pro">Pro — bulk + history · $300/mo</h2>
+<div class="ep"><code>GET /v1/pro/scores?chain=</code><span>every seller's latest score for a chain, bulk</span></div>
+<div class="ep"><code>GET /v1/pro/scores/history?chain=&amp;address=&amp;limit=</code><span>full score time series for one seller</span></div>
+<div class="ep"><code>GET /v1/pro/delivery?chain=</code><span>delivery-state map (paid-probe evidence) for a chain, bulk</span></div>
+<pre>curl -H 'X-API-Key: YOUR_PRO_KEY' \\
+  https://api.merona.io/v1/pro/scores?chain=base
+<b># 600 rpm (10&#215;) · X-API-Key header · email SLA</b></pre>
+<p class="tag">$300/mo · $3,000/yr — manually onboarded, mail
+<a href="mailto:hello@merona.io">hello@merona.io</a> — USDC or invoice.
+All per-call pricing and the free feeds above are unchanged.</p>
+
 <h2 class="mcp">MCP — wire it into your agent</h2>
 <div class="ep mcp"><code>POST /mcp</code><span>streamable HTTP · manifest at <a href="/mcp.json">/mcp.json</a></span></div>
 <div class="ep mcp"><code>tools</code><span>payto_check · mismatch_feed · clean_stats free — trust_score paid</span></div>
+<div class="ep mcp"><code>registry</code><span>listed on <a href="https://smithery.ai/servers/michaelfitz/merona">Smithery</a> and the official MCP registry (io.merona/settlement-index)</span></div>
 
 <h2>Free, no key</h2>
 <div class="ep"><code>merona.io/check?q=</code><span>one-shot payTo-integrity check (wallet or url)</span></div>
@@ -746,6 +1207,19 @@ by merona's attester
 — only attestations from that address are merona's. Agents: this same URL
 returns JSON unless the request asks for text/html.</p>
 </div></body></html>"""
+
+
+def _pay_params(path: str) -> tuple[float | None, str]:
+    """(price_usd, description) for the x402 paid lane, keyed on path. Every
+    payable prefix except /v1/delivery/ prices at the module default
+    (price_usd=None -> x402pay.PRICE_USD); /v1/delivery/ is the one route
+    priced separately. The SAME pair must be used for a given path's 402
+    advertisement and its settle() call, or the facilitator rightly rejects
+    the payment on amount mismatch — this is the one place that decision is
+    made, so both call sites agree by construction."""
+    if path.startswith("/v1/delivery/"):
+        return DELIVERY_PRICE_USD, DELIVERY_PAY_DESC
+    return None, PAY_DESC
 
 
 def _meter(ident: str, path: str, status: int) -> None:
@@ -805,17 +1279,19 @@ class Handler(BaseHTTPRequestHandler):
                 return xff.split(",")[-1].strip()[:45]
         return peer
 
-    def _identity(self) -> tuple[str, bool]:
-        """(identity, authorized). Keys are accepted ONLY via the X-API-Key
-        header — never in the URL, where they would persist in proxy/CDN access
-        logs and browser history (audit should-fix). With keys configured a
-        valid key is required; without any, fall back to per-IP anonymous."""
+    def _identity(self) -> tuple[str, bool, bool]:
+        """(identity, authorized, is_pro). Keys are accepted ONLY via the
+        X-API-Key header — never in the URL, where they would persist in
+        proxy/CDN access logs and browser history (audit should-fix). With
+        keys configured a valid key is required; without any, fall back to
+        per-IP anonymous (never pro — pro requires a configured key)."""
         key = self.headers.get("X-API-Key") or ""
         if KEYS:
             if key in KEYS:
-                return f"key:{KEYS[key]}", True
-            return f"ip:{self._client_ip()}", False
-        return f"ip:{self._client_ip()}", True
+                name = KEYS[key]
+                return f"key:{name}", True, _is_pro(name)
+            return f"ip:{self._client_ip()}", False, False
+        return f"ip:{self._client_ip()}", True, False
 
     def do_GET(self):        # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -825,8 +1301,10 @@ class Handler(BaseHTTPRequestHandler):
         # ones below (/, /mcp.json, glama, /outreach/review). Previously these
         # served before any limiter, so an unauthenticated flood of GET / was
         # unthrottled; now only /healthz (for uptime monitors) bypasses.
-        ident, ok = self._identity()
-        wait = BUCKETS.take(ident)
+        ident, ok, is_pro = self._identity()
+        # Pro identities draw from a SEPARATE token-bucket pool (product
+        # spec): exhausting one pool never throttles the other.
+        wait = (PRO_BUCKETS if is_pro else BUCKETS).take(ident)
         if wait > 0:
             return self._send(429, {"error": "rate limited"},
                               {"Retry-After": str(max(1, int(wait + 0.5)))},
@@ -844,6 +1322,20 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
                 return
             return self._send(200, INDEX)
+        if path == "/v1/trust/evaluate":
+            # A human clicking the gate link (or an agent probing with GET)
+            # must get USAGE, not the paid lane's 402 — this route is POST-only
+            # and free. Answer here, before the payable /v1/trust/ prefix
+            # matching below can claim the path.
+            return self._send(405, {
+                "error": "use POST",
+                "method": "POST /v1/trust/evaluate",
+                "schema": "x402-trust-query-v0.1",
+                "example": {"schema": "x402-trust-query-v0.1",
+                            "direction": "seller",
+                            "subject": {"wallet": "0x…", "chain": "base"}},
+                "free": True,
+                "docs": PUBLIC_BASE + "/#evaluate"}, cache="public, max-age=300")
         if path == "/outreach/review":
             # Read-only approval review page. Loading it NEVER sends (email
             # scanners pre-fetch links); the token is the bearer secret,
@@ -862,6 +1354,23 @@ class Handler(BaseHTTPRequestHandler):
             if self.command != "HEAD":
                 self.wfile.write(body)
             return
+        if path == "/outreach/worklist":
+            # Read-only, bookmarkable to-do list. Same security shape as
+            # /outreach/review: token is the bearer secret, an invalid token
+            # gets no batch contents, and this page NEVER sends (no POST target).
+            token = (parse_qs(urlparse(self.path).query).get("token")
+                     or [""])[0]
+            code, page = _outreach_worklist(token)
+            body = page.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+            return
         if path == "/mcp.json":
             return self._send(200, MCP_MANIFEST)
         if path == "/.well-known/glama.json":
@@ -869,18 +1378,32 @@ class Handler(BaseHTTPRequestHandler):
             # proof that whoever holds GLAMA_MAINTAINER_EMAIL runs the server.
             # Public contact address only — never a key, never a token.
             return self._send(200, GLAMA_WELL_KNOWN)
+        if path.startswith("/v1/pro/"):
+            # Read-only bulk tier, gated on a pro key — never x402 (this
+            # prefix is deliberately outside the payable-prefix tuple below)
+            # and never a 402. No key / a non-pro key both get the same 403
+            # with a pricing pointer, not the generic 401 the keyed lane uses.
+            if not is_pro:
+                code, obj = _pro_forbidden()
+                self._send(code, obj, cache="no-store")
+                return _meter(ident, path, code)
+            code, obj = self._route_pro(path)
+            self._send(code, obj, cache="no-store")
+            return _meter(ident, path, code)
 
         # (identity + rate limit already applied at the top of do_GET, so the
         # anonymous-flood / usage-file abuse guard from LB-6 still holds here.)
         if not ok:
             # x402 lane: no key needed — pay per call on the rail we index.
             payable = path.startswith(("/v1/trust/", "/v1/agent/",
-                                       "/v1/endpoint"))
+                                       "/v1/endpoint", "/v1/delivery/"))
             if x402pay.enabled() and payable:
                 resource = PUBLIC_BASE + path
+                price_usd, desc = _pay_params(path)
                 pay = self.headers.get("X-PAYMENT")
                 if not pay:
-                    self._send(402, x402pay.payment_required(resource, PAY_DESC),
+                    self._send(402, x402pay.payment_required(
+                                   resource, desc, price_usd=price_usd),
                                cache="no-store")
                     return _meter(ident, path, 402)
                 # answer FIRST, settle ONLY on success — never charge for a
@@ -889,10 +1412,11 @@ class Handler(BaseHTTPRequestHandler):
                 if code != 200:
                     self._send(code, obj, cache="no-store")
                     return _meter(ident, path, code)
-                ok2, receipt, payer, err = x402pay.settle(pay, resource,
-                                                          PAY_DESC)
+                ok2, receipt, payer, err = x402pay.settle(
+                    pay, resource, desc, price_usd=price_usd)
                 if not ok2:
-                    body = x402pay.payment_required(resource, PAY_DESC)
+                    body = x402pay.payment_required(
+                        resource, desc, price_usd=price_usd)
                     body["error"] = err
                     self._send(402, body, cache="no-store")
                     return _meter(ident, path, 402)
@@ -924,10 +1448,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             m = re.match(r"^/v1/trust/([^/]+)/([^/]+)$", path)
             ma = re.match(r"^/v1/agent/([^/]+)/([^/]+)$", path)
+            md = re.match(r"^/v1/delivery/([^/]+)/([^/]+)$", path)
             if m:
                 return trust_lookup(m.group(1), m.group(2))
             if ma:
                 return agent_lookup(ma.group(1), ma.group(2))
+            if md:
+                return delivery_lookup(md.group(1), md.group(2))
             if path == "/v1/endpoint":
                 q = (parse_qs(urlparse(self.path).query).get("origin")
                      or [""])[0]
@@ -936,6 +1463,27 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             # Never echo raw backend/DB exception text to clients (audit LB-5).
             print(f"[trust-api] backend error on {path[:MAX_PATH_LOG]}: "
+                  f"{type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            return 503, {"error": "backend unavailable"}
+
+    def _route_pro(self, path: str):
+        # Isolated try/except like _route (audit LB-5): a bug in the pro
+        # handlers must never take the process down or leak backend text.
+        try:
+            q = parse_qs(urlparse(self.path).query)
+            chain = (q.get("chain") or [""])[0].strip().lower()
+            if path == "/v1/pro/scores":
+                return pro_scores(chain)
+            if path == "/v1/pro/scores/history":
+                address = (q.get("address") or [""])[0].strip()
+                limit_raw = (q.get("limit")
+                            or [str(PRO_SCORES_HISTORY_DEFAULT_LIMIT)])[0]
+                return pro_scores_history(chain, address, limit_raw)
+            if path == "/v1/pro/delivery":
+                return pro_delivery(chain)
+            return 404, {"error": "not found", "index": "/"}
+        except Exception as e:
+            print(f"[trust-api] pro backend error on {path[:MAX_PATH_LOG]}: "
                   f"{type(e).__name__}: {e}", file=sys.stderr, flush=True)
             return 503, {"error": "backend unavailable"}
 
@@ -951,6 +1499,40 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):        # noqa: N802 — MCP streamable-HTTP endpoint
         path = urlparse(self.path).path.rstrip("/")
+        if path == "/v1/trust/evaluate":
+            # x402 trust-provider gate decision. FREE by construction: the
+            # x402 payment lane (X402_PAYTO / x402pay.enabled()) only exists
+            # in do_GET's payable-prefix branch below — this POST route never
+            # consults it and answers unconditionally once past rate limiting.
+            ident, _ok, _is_pro = self._identity()
+            wait = BUCKETS.take(ident)
+            if wait > 0:
+                return self._send(429, {"error": "rate limited"},
+                                  {"Retry-After": str(max(1, int(wait + 0.5)))},
+                                  cache="no-store")
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = 0
+            if n > TRUST_EVALUATE_MAX_BODY:
+                self._send(413, {"error": "body too large, max 16384 bytes"},
+                          cache="no-store")
+                return _meter(ident, path, 413)
+            try:
+                raw = self.rfile.read(n) if n > 0 else b""
+            except Exception:
+                raw = b""
+            try:
+                code, obj = _trust_evaluate(raw)
+            except Exception as e:
+                # Isolated failure: a bug here must never take the process
+                # down or leak backend/DB exception text to the client
+                # (audit LB-5 — same rule _route follows).
+                print(f"[trust-api] trust evaluate error: "
+                      f"{type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                code, obj = 500, {"error": "backend unavailable"}
+            self._send(code, obj, cache="no-store")
+            return _meter(ident, path, code)
         if path == "/outreach/approve":
             # Records "operator approved the current batch" — nothing more.
             # No credentials here; a privileged poller on the box does the
@@ -978,7 +1560,7 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/mcp":
             return self._send(404, {"error": "not found", "index": "/"},
                               cache="no-store")
-        ident, _ok = self._identity()
+        ident, _ok, _is_pro = self._identity()
         wait = BUCKETS.take(ident)
         if wait > 0:
             return self._send(429, {"error": "rate limited"},

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +65,14 @@ class FakeClient:
         return {"from": self.tx_from.get(tx, OUTSIDER)}
 
 
+def _publish_baseline(s, head):
+    """The anchor is the PUBLISHED dashboard baseline's block edge — the metrics
+    blob the nightly writes LAST (meta[DASHBOARD_METRICS_KEY]). Publishing a new
+    blob is the ONLY thing that may move the anchor."""
+    s.set_meta(live_pulse.DASHBOARD_METRICS_KEY,
+               {"chains": {"base": {"max_block": head, "settlements": 1}}})
+
+
 def setup(tmp_path, monkeypatch, anchor=100):
     root = tmp_path / "root"
     (root / "data" / "indexer").mkdir(parents=True)
@@ -73,6 +80,9 @@ def setup(tmp_path, monkeypatch, anchor=100):
         json.dumps({"relayers_by_chain": {"base": [RELAYER]}}))
     monkeypatch.setattr(live_pulse, "ROOT", root)
     s = Store(tmp_path / "t.sqlite")
+    _publish_baseline(s, anchor)
+    # ranges also exist in the store; committing them must NOT move the live
+    # anchor (the original bug anchored on indexed_ranges MAX).
     s.commit_range("base", 0, anchor, [], "t")
     s.db.commit()
     return s
@@ -109,9 +119,23 @@ def test_deltas_accumulate_and_nightly_reset(tmp_path, monkeypatch):
     cl.head = 115
     state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
     assert state["base"]["scoped_delta"] == 2 and state["base"]["cursor"] == 115
-    # the nightly lands: anchor moves, the live delta restarts at zero —
-    # everything below the new anchor is now the verified figure's job
-    s.commit_range("base", 101, 120, [], "t"); s.db.commit()
+    # REGRESSION (caught live, 12,929,862 -> 12,779,835): the nightly INDEXES
+    # hours before it PUBLISHES the metrics blob. Indexing progress — committed
+    # ranges, inserted settlement rows — must NOT move the anchor; only the
+    # published baseline may, since the headline is baseline + delta.
+    s.commit_range("base", 101, 130, [
+        {"tx_hash": "0xe5", "log_index": 0, "chain": "base", "token": BASE.usdc,
+         "payer": PAYER, "seller": SELLER, "amount": "1",
+         "block_number": 125, "block_timestamp": 1700000000}], "t")
+    s.db.commit()
+    cl.head = 118
+    state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
+    assert state["base"]["anchor"] == 100          # indexing didn't move it
+    assert state["base"]["scoped_delta"] == 2      # delta held -> no drop
+    # the nightly PUBLISH lands (new metrics blob): anchor moves WITH the
+    # baseline it accompanies, and the live delta restarts at zero.
+    _publish_baseline(s, 120)
+    s.db.commit()
     cl.head = 121
     state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
     assert state["base"]["anchor"] == 120
@@ -139,6 +163,29 @@ def test_catchup_is_chunked(tmp_path, monkeypatch):
     state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
     assert state["base"]["cursor"] == 105      # 101..105 only
     assert state["base"]["behind"] == 95       # visible, not silent
+
+
+def _put_settlement(s, block, facilitator, i):
+    ins = s._settlement_insert_sql(with_facilitator=True)
+    s.db.execute(ins, (f"0x{block}{i}", i, "base", BASE.usdc, PAYER, SELLER,
+                       "1", block, 1700000000, facilitator))
+
+
+def test_count_gap_measures_the_pending_publish_window(tmp_path, monkeypatch):
+    """The proof-of-disparity: scoped settlements already in the store above the
+    PUBLISHED baseline's block — counted with the tally's own predicate. This is
+    what the headline was dropping, shown to still exist."""
+    s = setup(tmp_path, monkeypatch, anchor=100)   # published baseline @ 100
+    # the indexer has since recorded settlements past the published edge:
+    _put_settlement(s, 105, RELAYER, 1)            # scoped (registered relayer)
+    _put_settlement(s, 110, RELAYER, 2)            # scoped
+    _put_settlement(s, 120, OUTSIDER, 3)           # NOT scoped (unknown relayer)
+    _put_settlement(s, 90, RELAYER, 4)             # already published: excluded
+    s.db.commit()
+    g = live_pulse.count_gap(s, "base", [RELAYER])
+    assert g["published_block"] == 100 and g["store_head"] == 120
+    assert g["gap_blocks"] == 20
+    assert g["scoped_in_gap"] == 2                  # the two unpublished scoped
 
 
 if __name__ == "__main__":

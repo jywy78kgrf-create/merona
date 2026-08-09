@@ -1,5 +1,7 @@
 # merona MCP server
 
+[![smithery badge](https://smithery.ai/badge/michaelfitz/merona)](https://smithery.ai/servers/michaelfitz/merona)
+
 Wire merona into your agent over MCP — free payTo-integrity checks and a
 mismatch feed, plus paid wash-aware seller trust scores.
 

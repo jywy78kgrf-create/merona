@@ -5,7 +5,8 @@ settlement. It reads public blockchain data across six chains nightly, strips
 wash trading and self-dealing, and publishes clean numbers **anyone can
 recompute** — plus free tools to act on them.
 
-Live: **[merona.io](https://merona.io)** · API: **[api.merona.io](https://api.merona.io)**
+Live: **[merona.io](https://merona.io)** · API: **[api.merona.io](https://api.merona.io)** ·
+MCP: [![smithery badge](https://smithery.ai/badge/michaelfitz/merona)](https://smithery.ai/servers/michaelfitz/merona)
 
 ## Why this exists
 
