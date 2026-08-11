@@ -1685,7 +1685,9 @@ out, <code>direction: seller</code></span></div>
   -H 'content-type: application/json' \\
   -d '{"schema":"x402-trust-query-v0.1","direction":"seller",
        "subject":{"wallet":"0xSELLER","chain":"base"}}'
-<b># FAIL only on receipt-proven facts — the settlement tx ships in `evidence`</b>
+<b># FAILs rest on recorded on-chain facts, never community reports: a</b>
+<b># charged-but-unserved probe ships its settlement tx in `evidence`; a</b>
+<b># grade FAIL cites the anchored score snapshot it derives from</b>
 <b># basis[] entries are typed {class,kind,ref,observed_at}; class is one of</b>
 <b># curated/behavioral/community/attested — a FAIL always cites curated or</b>
 <b># behavioral evidence (never attested/community alone)</b>
