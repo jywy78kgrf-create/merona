@@ -1691,13 +1691,23 @@ out, <code>direction: seller</code></span></div>
 <b># behavioral evidence (never attested/community alone)</b>
 <b># unknown sellers return score:null + null_reason, never a fabricated number</b>
 <b># evidence_uri is content-addressed (sha256: nightly anchored snapshot);</b>
-<b># issued_at/expires_at (= issued_at + ttl) bound how long the decision is fresh</b></pre>
+<b># issued_at/expires_at (= issued_at + ttl) bound how long the decision is fresh</b>
+<b># responses are SIGNED: Ed25519 over the JCS (RFC 8785) canonical bytes —</b>
+<b># strip `envelope`, canonicalise, verify against /.well-known/jwks.json</b></pre>
 <p class="tag">Implements the trust-provider extension proposed in
 <a href="https://github.com/x402-foundation/x402/issues/2299">x402#2299</a> —
 the seller direction: merona actually pays sellers and records whether they
 deliver. Chains: base · polygon · solana. Provider descriptor:
 <a href="/.well-known/x402-trust-provider">/.well-known/x402-trust-provider</a>
-· field-level schema: <a href="/v1/spec">/v1/spec</a>.</p>
+· field-level schema: <a href="/v1/spec">/v1/spec</a>
+· signing key: <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>.</p>
+<p class="tag">Verify it yourself — zero-dependency, no auth:
+<a href="https://github.com/jywy78kgrf-create/merona/blob/main/conformance/check.py">conformance/check.py</a>
+runs 146 shape + signature checks against this live API, and
+<a href="https://github.com/jywy78kgrf-create/merona/blob/main/conformance/verify_evidence.py">conformance/verify_evidence.py</a>
+walks any evaluation back to primary data: anchors record → sha256
+membership → combined-hash recomputation → the EAS attestation on Base.
+A FAIL that cites our evidence can be audited without trusting us.</p>
 
 <h2 id="pro">Pro — bulk + history · $300/mo</h2>
 <div class="ep"><code>GET /v1/pro/scores?chain=</code><span>every seller's latest score for a chain, bulk</span></div>
