@@ -2,6 +2,13 @@
 evidence thresholds (build_seller_index), plus its wiring into the nightly
 dashboard blob (build_dashboard_metrics).
 
+SCOPE (restated 2026-08-11): the index is x402-SCOPED — only settlements whose
+facilitator is in the registry relayer set count. The original superset scope
+published 104,814 Base "sellers" under an x402 label when the scoped count was
+89,337 (active tier 2,094 vs scoped 1,184) — the exact inflation merona exists
+to correct. Tests pin the scope with an off-registry facilitator row that must
+never count.
+
 Two synthetic sellers pin the evidence bar itself:
   - seller A: 3 distinct EXTERNAL payers, $20 lifetime volume -> clears
     "active" (>=2 payers, >=$1) and "established" (>=3 payers, >=$5), but not
@@ -13,6 +20,7 @@ Two synthetic sellers pin the evidence bar itself:
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -24,10 +32,22 @@ import daily_snapshot                                    # noqa: E402
 from storage import Store                                # noqa: E402
 
 INS = ("INSERT INTO settlements(tx_hash,log_index,chain,token,payer,seller,"
-       "amount,block_number,block_timestamp) VALUES(?,?,?,?,?,?,?,?,?)")
+       "amount,block_number,block_timestamp,facilitator) "
+       "VALUES(?,?,?,?,?,?,?,?,?,?)")
 
 SELLER_A = "0x" + "AA" * 20
 SELLER_B = "0x" + "BB" * 20
+RELAYER = "0x" + "fa" * 20          # the registry facilitator for these tests
+OFF_REGISTRY = "0x" + "0d" * 20     # a facilitator NOT in the registry
+
+
+def _registry(tmp_path, monkeypatch, chains=("base",)):
+    """Point daily_snapshot.REGISTRY at a tmp registry whose relayer set is
+    just RELAYER — the scope every seeded row must clear to count."""
+    p = tmp_path / "relayer_registry.json"
+    p.write_text(json.dumps(
+        {"relayers_by_chain": {ch: [RELAYER] for ch in chains}}))
+    monkeypatch.setattr(daily_snapshot, "REGISTRY", p)
 
 
 def _seed(store: Store):
@@ -35,26 +55,36 @@ def _seed(store: Store):
     blk = 1000
     rows = [
         # seller A: 3 distinct external payers, amounts summing to $20
-        ("0xa1", 0, "base", "0xusdc", "0xp1", SELLER_A, 5_000_000, blk, now),
-        ("0xa2", 0, "base", "0xusdc", "0xp2", SELLER_A, 5_000_000, blk + 1, now),
-        ("0xa3", 0, "base", "0xusdc", "0xp3", SELLER_A, 10_000_000, blk + 2, now),
+        ("0xa1", 0, "base", "0xusdc", "0xp1", SELLER_A, 5_000_000, blk, now, RELAYER),
+        ("0xa2", 0, "base", "0xusdc", "0xp2", SELLER_A, 5_000_000, blk + 1, now, RELAYER),
+        ("0xa3", 0, "base", "0xusdc", "0xp3", SELLER_A, 10_000_000, blk + 2, now, RELAYER),
         # seller B: self-heavy — two self-pay rows (payer == seller, tiny) plus
         # exactly one external payer, totalling $0.01
-        ("0xb1", 0, "base", "0xusdc", SELLER_B, SELLER_B, 1_000, blk + 3, now),
-        ("0xb2", 0, "base", "0xusdc", SELLER_B, SELLER_B, 1_000, blk + 4, now),
-        ("0xb3", 0, "base", "0xusdc", "0xp4", SELLER_B, 8_000, blk + 5, now),
+        ("0xb1", 0, "base", "0xusdc", SELLER_B, SELLER_B, 1_000, blk + 3, now, RELAYER),
+        ("0xb2", 0, "base", "0xusdc", SELLER_B, SELLER_B, 1_000, blk + 4, now, RELAYER),
+        ("0xb3", 0, "base", "0xusdc", "0xp4", SELLER_B, 8_000, blk + 5, now, RELAYER),
+        # SCOPE PIN: a third seller paid handsomely by many payers — but via a
+        # facilitator that is NOT in the registry. If the index ever loses its
+        # facilitator scoping (the 2026-08-11 superset bug), this seller leaks
+        # into every tier and the counts below break.
+        *[(f"0xc{i}", 0, "base", "0xusdc", f"0xq{i}", "0x" + "CC" * 20,
+           20_000_000, blk + 10 + i, now, OFF_REGISTRY) for i in range(6)],
     ]
     for r in rows:
         store.db.execute(INS, r)
     store.db.commit()
 
 
-def test_seller_index_tiers(tmp_path):
+def test_seller_index_tiers(tmp_path, monkeypatch):
     s = Store(tmp_path / "t.sqlite")
+    _registry(tmp_path, monkeypatch)
     _seed(s)
     idx = daily_snapshot.build_seller_index(s)
 
     assert "method" in idx and "self-pay" in idx["method"]
+    assert "x402-scoped" in idx["method"]
+    # the OFF_REGISTRY seller (6 payers, $120) must be absent from every tier
+    # below — the 'any' count staying at 2 IS the scope pin.
     tiers = {t["tier"]: t for t in idx["tiers"]["base"]}
     assert set(tiers) == {"any", "active", "established", "substantial", "busy"}
 
@@ -82,14 +112,15 @@ def test_seller_index_tiers(tmp_path):
     s.close()
 
 
-def test_seller_index_excludes_self_pay_from_payer_count(tmp_path):
+def test_seller_index_excludes_self_pay_from_payer_count(tmp_path, monkeypatch):
     """A seller paid only by itself must never clear the 'active' bar (>=2
     external payers) no matter how many times it self-pays."""
     s = Store(tmp_path / "t.sqlite")
+    _registry(tmp_path, monkeypatch)
     now = int(time.time())
     for i in range(5):
         s.db.execute(INS, (f"0xs{i}", 0, "base", "0xusdc", SELLER_A, SELLER_A,
-                           2_000_000, 2000 + i, now))
+                           2_000_000, 2000 + i, now, RELAYER))
     s.db.commit()
     idx = daily_snapshot.build_seller_index(s)
     tiers = {t["tier"]: t for t in idx["tiers"]["base"]}
@@ -98,17 +129,19 @@ def test_seller_index_excludes_self_pay_from_payer_count(tmp_path):
     s.close()
 
 
-def test_seller_index_queries_bind_no_parameters(tmp_path):
+def test_seller_index_queries_bind_no_parameters(tmp_path, monkeypatch):
     """REGRESSION (2026-08-10): the tier query carries a literal '%' (the
     '%\\_permit2' exclusion). psycopg treats '%' as a format placeholder as
     soon as bound parameters are passed, so binding the chain raised on
     Postgres — and build_dashboard_metrics' try/except swallowed it, shipping
     a nightly blob with no seller_index and a silently missing dashboard
     section. SQLite ignores '%' entirely, so only this invariant catches it:
-    these queries must execute WITHOUT bound parameters (chain inlined from
-    the hardcoded tuple), exactly like every other permit2-filtered query in
-    daily_snapshot.py."""
+    every tier query must execute WITHOUT bound parameters (chain + registry
+    relayers inlined from our own constants/file). The permit2 '%' literal is
+    gone from the scoped SQL, so the invariant is now the stronger, simpler
+    form: NO seller-index query binds parameters at all."""
     s = Store(tmp_path / "t.sqlite")
+    _registry(tmp_path, monkeypatch)
     _seed(s)
     calls: list = []
 
@@ -132,21 +165,24 @@ def test_seller_index_queries_bind_no_parameters(tmp_path):
         daily_snapshot.build_seller_index(s)
     finally:
         s.db = real
-    pct = [(sql, args) for sql, args in calls if "%" in sql]
-    assert pct, "expected the permit2 '%' filter in the tier SQL"
-    for sql, args in pct:
+    tier_calls = [(sql, args) for sql, args in calls
+                  if "FROM settlements" in sql and "payers" in sql]
+    assert tier_calls, "expected at least one tier query against settlements"
+    for sql, args in tier_calls:
         assert not args, (
-            "seller-index SQL containing a literal '%' was executed with bound "
-            f"parameters {args!r} — this raises on Postgres. Inline the value "
-            "or escape '%' as '%%'.")
+            "seller-index SQL was executed with bound parameters "
+            f"{args!r} — a literal '%' anywhere in this SQL would then raise "
+            "on Postgres (2026-08-10 regression). Inline values or escape "
+            "'%' as '%%'.")
     s.close()
 
 
-def test_dashboard_metrics_carries_seller_index(tmp_path):
+def test_dashboard_metrics_carries_seller_index(tmp_path, monkeypatch):
     """build_dashboard_metrics must fold seller_index into the published blob
     (best-effort — see the try/except around the call), so the dashboard has
     something to render once the nightly regenerates it."""
     s = Store(tmp_path / "t.sqlite")
+    _registry(tmp_path, monkeypatch)
     _seed(s)
     out = daily_snapshot.build_dashboard_metrics(s)
     assert "seller_index" in out

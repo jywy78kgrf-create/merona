@@ -189,9 +189,12 @@ def test_delivery_paid_lane_settles_at_delivery_price_end_to_end(
     assert fac.settle_bodies[0]["paymentRequirements"]["maxAmountRequired"] == "10000"
 
 
-def test_delivery_paid_lane_never_settles_on_404(tmp_path, monkeypatch):
-    """answers-first-settles-only-on-200: an unknown seller must not trigger
-    a settle attempt at all."""
+def test_delivery_paid_lane_settles_on_not_evaluated_200(tmp_path, monkeypatch):
+    """x402#2300 commitment #2 turned the empty-history case from a bare 404
+    into a billable 200 (not_evaluated) — unlike the old 404, THIS response
+    DOES trigger settle(), same as any other payable 200. discovery_basis is
+    itself the fact being sold (see delivery_lookup's docstring) — it isn't
+    a placeholder for "nothing to report.\""""
     receipts = tmp_path / "receipts.jsonl"
     receipts.write_text("")
     _reset_delivery_cache(monkeypatch, receipts)
@@ -202,7 +205,23 @@ def test_delivery_paid_lane_never_settles_on_404(tmp_path, monkeypatch):
 
     code, body = _get(f"/v1/delivery/base/{SELLER}",
                       headers={"X-PAYMENT": FAKE_PAYMENT})
-    assert code == 404
+    assert code == 200
+    assert body["status"] == "not_evaluated"
+    assert fac.settle_bodies != []          # unlike the old 404, this settles
+
+
+def test_delivery_paid_lane_never_settles_on_400(monkeypatch):
+    """answers-first-settles-only-on-200 still holds for genuine errors: a
+    bad chain/address never reaches delivery_lookup's not_evaluated branch
+    at all, so it must still never settle."""
+    monkeypatch.setattr(api, "KEYS", {"k1": "tester"})
+    fac = _FakeFacilitator()
+    monkeypatch.setattr(x402pay, "PAYTO", PAYTO)
+    monkeypatch.setattr(x402pay, "requests", fac)
+
+    code, body = _get(f"/v1/delivery/ethereum/{SELLER}",
+                      headers={"X-PAYMENT": FAKE_PAYMENT})
+    assert code == 400
     assert fac.settle_bodies == []
 
 
@@ -231,13 +250,70 @@ def test_delivery_lookup_bad_address():
     assert code == 400 and body["error"] == "bad address"
 
 
-def test_delivery_lookup_404_when_no_probes_recorded(tmp_path, monkeypatch):
+def test_delivery_lookup_not_evaluated_when_no_probes_recorded(tmp_path,
+                                                               monkeypatch):
+    """x402#2300 commitment #2: an address with no paid-probe history is now
+    an explicit 200 not_evaluated, not a bare 404 — distinct from probed-
+    but-inconclusive (see the history/counts tests below, which DO get a
+    404-free 200 with `probes`)."""
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", None)      # see basis tests below
     receipts = tmp_path / "receipts.jsonl"
     receipts.write_text("")
     _reset_delivery_cache(monkeypatch, receipts)
     code, body = api.delivery_lookup("base", SELLER)
-    assert code == 404
-    assert body == {"error": "no paid delivery probes recorded for this seller"}
+    assert code == 200
+    assert body == {"status": "not_evaluated",
+                    "note": "address was not in the discovery set that fed "
+                            "the paid sweep — distinct from "
+                            "probed-but-inconclusive"}
+
+
+# --- discovery_basis (x402-foundation/x402#2300 commitment #1) -------------------
+def test_delivery_not_evaluated_omits_discovery_basis_when_none(tmp_path,
+                                                                monkeypatch):
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", None)
+    receipts = tmp_path / "receipts.jsonl"
+    receipts.write_text("")
+    _reset_delivery_cache(monkeypatch, receipts)
+    code, body = api.delivery_lookup("base", SELLER)
+    assert code == 200 and "discovery_basis" not in body
+
+
+def test_delivery_not_evaluated_carries_discovery_basis_when_configured(
+        tmp_path, monkeypatch):
+    fake_basis = {"catalog": "bazaar", "snapshot_sha256": "b" * 64,
+                  "snapshot_date": "2026-08-08"}
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", fake_basis)
+    receipts = tmp_path / "receipts.jsonl"
+    receipts.write_text("")
+    _reset_delivery_cache(monkeypatch, receipts)
+    code, body = api.delivery_lookup("base", SELLER)
+    assert code == 200
+    assert body["status"] == "not_evaluated"
+    assert body["discovery_basis"] == fake_basis
+
+
+def test_delivery_probed_response_carries_discovery_basis_additively(
+        tmp_path, monkeypatch):
+    """A probed seller's response keeps every existing field AND gains
+    discovery_basis — additive, per the task: probed-address responses
+    stay unchanged apart from this one new key."""
+    fake_basis = {"catalog": "bazaar", "snapshot_sha256": "c" * 64,
+                  "snapshot_date": "2026-08-08"}
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", fake_basis)
+    receipts = tmp_path / "receipts.jsonl"
+    receipts.write_text(json.dumps({
+        "ts": "2026-08-07T00:00:00Z", "network": "base", "pay_to": SELLER,
+        "outcome": "delivered", "url": "https://s/x"}) + "\n")
+    monkeypatch.setattr(api, "_query", lambda *a, **k: [])
+    _reset_delivery_cache(monkeypatch, receipts)
+    code, body = api.delivery_lookup("base", SELLER)
+    assert code == 200
+    assert body["discovery_basis"] == fake_basis
+    # every pre-existing field is still there, untouched
+    for key in ("chain", "seller", "delivery", "probes", "counts",
+               "verification", "disclaimer"):
+        assert key in body
 
 
 def test_delivery_lookup_history_newest_first_counts_and_amount_conversion(

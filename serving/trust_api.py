@@ -556,6 +556,50 @@ def _verification(snapshot_date: str, fname: str = "seller_aggregates.csv"
     }
 
 
+# --- discovery basis (x402-foundation/x402#2300 commitment #1) -----------------
+# A paid sweep's denominator is its DISCOVERY SET, not "the market": another
+# operator in #2300 was absent from the Bazaar snapshot that fed our
+# 502-seller paid sweep, so he was never evaluated at all — and nothing in a
+# plain 404/absence told him that was the reason, rather than a refusal. This
+# block lets a consumer check whether a subject was even discoverable at
+# evaluation time, the same "recomputable, not just asserted" posture
+# VERIFICATION already gives scores: the catalog is content-addressed
+# (sha256), so anyone holding the same snapshot file can confirm it
+# themselves rather than trust our say-so.
+#
+# Loaded ONCE at import (like _SIGNING_KEY above) — the catalog file doesn't
+# change mid-process, so there is nothing to gain by re-hashing several MB on
+# every request. `_load_discovery_basis` takes an explicit path (rather than
+# reading the env var itself) so it stays a pure, unit-testable function —
+# env resolution happens once, right below, at the one real call site.
+X402_CATALOG_FILE = os.environ.get(
+    "X402_CATALOG_FILE", str(ROOT / "data" / "processed" / "bazaar_resources.csv"))
+
+
+def _load_discovery_basis(path) -> dict | None:
+    """{"catalog": "bazaar", "snapshot_sha256": sha256 hex of the file,
+    "snapshot_date": UTC date (ISO) of the file's mtime} for the catalog
+    snapshot at `path`, or None when it's missing/unreadable — NEVER a
+    fabricated digest for a catalog we can't actually read. Every consumer of
+    this value (below) must omit the `discovery_basis` key entirely on None,
+    the same "absent, not invented" rule _load_signing_key follows for
+    envelope signing."""
+    try:
+        p = Path(path)
+        data = p.read_bytes()
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return None
+    return {
+        "catalog": "bazaar",
+        "snapshot_sha256": hashlib.sha256(data).hexdigest(),
+        "snapshot_date": mtime.date().isoformat(),
+    }
+
+
+DISCOVERY_BASIS = _load_discovery_basis(X402_CATALOG_FILE)
+
+
 def agent_lookup(chain: str, address: str) -> tuple[int, dict]:
     """Buy-side score: an agent paid me — who am I dealing with?
 
@@ -917,14 +961,25 @@ def _eval_curated_probe_entry(delivery: dict, record: dict,
     `chain` is threaded in from the caller's already-validated query chain
     rather than trusted from `record` alone: trust_lookup's 404 "unknown
     seller" shape (see _evaluate_seller_record's docstring) can carry a
-    `delivery` block with no top-level `chain` field at all."""
+    `delivery` block with no top-level `chain` field at all.
+
+    Carries OPTIONAL `discovery_basis` (#2300 commitment #1) when the module
+    catalog snapshot loaded — omitted entirely on None, never null. This is
+    the ONE basis entry that gets it: a first-party PAID PROBE is exactly the
+    evidence whose absence is ambiguous without a discovery-set denominator
+    (not_evaluated vs probed-but-inconclusive); behavioral/attested entries
+    derive from merona's own scoring pipeline, not the paid sweep, so a
+    discovery basis says nothing about them."""
     settlement_tx = delivery.get("settlement_tx")
     probe_chain = chain or record.get("chain") or "unknown"
     ref = f"{probe_chain}:tx:{settlement_tx}" if settlement_tx else None
     # trust_lookup's delivery dicts key the probe date as "as_of" (see
     # _delivery_states/_delivery_history_states above) — not checked_at/date.
-    return _eval_basis("curated", "first_party_probe", ref,
-                       delivery.get("as_of"))
+    entry = _eval_basis("curated", "first_party_probe", ref,
+                        delivery.get("as_of"))
+    if DISCOVERY_BASIS is not None:
+        entry["discovery_basis"] = DISCOVERY_BASIS
+    return entry
 
 
 # score:null must always carry a reason (draft-02: never fabricate a
@@ -1238,6 +1293,10 @@ TRUST_PROVIDER_DESCRIPTOR = {
                 "grounds to re-evaluate, not to trust the cached decision",
     "spec_url": PUBLIC_BASE + "/v1/spec",
     "docs": PUBLIC_BASE + "/#evaluate",
+    # #2300 commitment #3: canonical crawler-UA registry — lets a seller who
+    # sees merona-looking traffic hitting them look up what it actually is,
+    # instead of guessing (CRAWLERS, near the other /.well-known/ dicts).
+    "crawlers": PUBLIC_BASE + "/.well-known/merona-crawlers.json",
     "pricing": "free, rate-limited",
     "chains": ["base", "polygon", "solana"],
     # Signed-card envelope (twzrd draft-02 / x402#2299): the canonicalisation
@@ -1355,6 +1414,19 @@ TRUST_API_SPEC = {
                                                "was observed (probe date "
                                                "or snapshot date); null if "
                                                "unknown"},
+                "discovery_basis": {"type": "object", "required": False,
+                    "description": "present ONLY on the curated "
+                                   "first_party_probe entry, and only when "
+                                   "this deployment has a readable catalog "
+                                   "snapshot configured (X402_CATALOG_FILE) "
+                                   "— absent entirely otherwise, never "
+                                   "null. {catalog, snapshot_sha256, "
+                                   "snapshot_date}: the content-addressed "
+                                   "discovery-set snapshot the paid sweep "
+                                   "drew its targets from, so a consumer "
+                                   "can independently check whether a "
+                                   "subject was even discoverable at "
+                                   "evaluation time (x402#2300)"},
             },
             "classes": dict(_EVAL_EVIDENCE_CLASS_NOTES),
         },
@@ -1424,6 +1496,33 @@ TRUST_API_SPEC = {
         },
     },
     "reason_codes": dict(_EVAL_REASON_CODE_NOTES),
+    # GET /v1/delivery/{chain}/{address} (paid; not part of the free
+    # trust-provider `request`/`response` pair above, but small enough to
+    # document here rather than invent a second spec doc for one route).
+    "delivery": {
+        "not_evaluated": {
+            "description": "x402#2300 commitment #2: what an address with "
+                           "NO paid-probe history on file now returns — "
+                           "HTTP 200 (not 404), so it's still billable, "
+                           "because discovery_basis is itself the fact "
+                           "being sold. Distinct from a probed-but-"
+                           "inconclusive outcome (which returns the normal "
+                           "delivery/probes/counts shape below).",
+            "shape": {"status": "\"not_evaluated\"",
+                      "discovery_basis": "optional, see below — omitted "
+                                         "entirely with no catalog snapshot "
+                                         "configured",
+                      "note": "human-readable framing of what "
+                             "not_evaluated does and doesn't mean"},
+        },
+        "discovery_basis": {"type": "object", "required": False,
+            "description": "present on EVERY /v1/delivery response "
+                           "(not_evaluated or probed) when this deployment "
+                           "has a readable catalog snapshot configured — "
+                           "same {catalog, snapshot_sha256, snapshot_date} "
+                           "shape as the curated basis entry above, from "
+                           "the same _load_discovery_basis loader"},
+    },
 }
 
 
@@ -1559,7 +1658,20 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
         return 400, {"error": "bad address"}
     probes = _delivery_history_map().get((chain, address)) or []
     if not probes:
-        return 404, {"error": "no paid delivery probes recorded for this seller"}
+        # #2300 commitment #2: an explicit not_evaluated state. This used to
+        # be a bare 404 — indistinguishable from "never in the discovery set
+        # that fed the paid sweep" AND from a rate-limited/broken client.
+        # Note the payment-gating consequence: do_GET's paid lane settles on
+        # ANY 200 (never on non-200) — this response IS a 200, so a paying
+        # caller is charged for it, same as for a probed seller. That's
+        # deliberate: discovery_basis is itself the useful fact being sold
+        # here, not a placeholder for "nothing to report."
+        resp = {"status": "not_evaluated",
+                "note": "address was not in the discovery set that fed the "
+                        "paid sweep — distinct from probed-but-inconclusive"}
+        if DISCOVERY_BASIS is not None:
+            resp["discovery_basis"] = DISCOVERY_BASIS
+        return 200, resp
     counts: dict = {}
     for p in probes:
         counts[p["outcome"]] = counts.get(p["outcome"], 0) + 1
@@ -1569,7 +1681,7 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
         "SELECT snapshot_date FROM seller_scores WHERE chain=? AND seller=? "
         "ORDER BY measured_date DESC LIMIT 1", (chain, address))
     snap = rows[0][0] if rows else None
-    return 200, {
+    resp = {
         "chain": chain, "seller": address,
         "delivery": _delivery(chain, address),
         "probes": probes,
@@ -1577,6 +1689,9 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
         "verification": _verification(snap),
         "disclaimer": DELIVERY_DISCLAIMER,
     }
+    if DISCOVERY_BASIS is not None:
+        resp["discovery_basis"] = DISCOVERY_BASIS
+    return 200, resp
 
 
 def _pro_forbidden() -> tuple[int, dict]:
@@ -1703,6 +1818,14 @@ deliver. Chains: base · polygon · solana. Provider descriptor:
 <a href="/.well-known/x402-trust-provider">/.well-known/x402-trust-provider</a>
 · field-level schema: <a href="/v1/spec">/v1/spec</a>
 · signing key: <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>.</p>
+<p class="tag">Wondering if a hit in your logs is really us? Every outbound
+UA we send is listed at
+<a href="/.well-known/merona-crawlers.json">/.well-known/merona-crawlers.json</a>
+(x402#2300) — and delivery evidence (curated <code>first_party_probe</code>
+basis entries, <code>GET /v1/delivery</code>) carries its own
+<code>discovery_basis</code>: the content-addressed catalog snapshot the
+paid sweep drew its targets from, so absence from a sweep is never
+confused with a refusal.</p>
 <p class="tag">Verify it yourself — zero-dependency, no auth:
 <a href="https://github.com/jywy78kgrf-create/merona/blob/main/conformance/check.py">conformance/check.py</a>
 runs 146 shape + signature checks against this live API, and
@@ -1923,6 +2046,10 @@ class Handler(BaseHTTPRequestHandler):
             # docstring for the verification recipe). {"keys": []} — not an
             # error — when X402_TRUST_SIGNING_KEY isn't configured.
             return self._send(200, _jwks())
+        if path == "/.well-known/merona-crawlers.json":
+            # #2300 commitment #3: canonical crawler-UA registry, same
+            # no-auth/cached style as the other /.well-known/ routes above.
+            return self._send(200, CRAWLERS)
         if path == "/v1/spec":
             # Field-level schema for x402-trust-query-v0.1 (request) and
             # x402-trust-evaluation-v0.1 (response) — hand-written, not
@@ -2382,6 +2509,157 @@ GLAMA_WELL_KNOWN = {
     "$schema": "https://glama.ai/mcp/schemas/connector.json",
     "maintainers": [{"email": e.strip()}
                     for e in GLAMA_MAINTAINER_EMAIL.split(",") if e.strip()],
+}
+
+# --- GET /.well-known/merona-crawlers.json ------------------------------------
+# x402-foundation/x402#2300 commitment #3: a canonical, machine-readable
+# registry of every outbound UA merona's own tooling sends. The other
+# operator in #2300 had to reverse-engineer which of FIVE user-agents hitting
+# his endpoint were merona's; this makes that a lookup instead of a guess.
+#
+# Every literal below was found by grepping the tree for outbound
+# `User-Agent`/`user_agent`/`USER_AGENT` assignments (not written from
+# memory) — indexer/tests/test_merona_crawlers.py re-reads each cited
+# `source` file and asserts the literal is actually there, so this registry
+# can't silently drift from the code that sends it.
+#
+# INCLUSION CRITERION for `user_agents` (the list a seller should actually
+# consult): an outbound request that (a) can land in an x402 SELLER's, a
+# catalog/marketplace's, or a rival TRACKER's access log, AND (b) either
+# self-identifies as merona, or is one of the "x402-endpoint-quality-audit" /
+# "x402-audit-indexer" family this project has publicly run probes under.
+# Two things are deliberately NOT in that list, and not merely folded into
+# `rpc_or_internal` either — they never belong in a CRAWLER registry at all:
+#   * `server_version` strings (merona-trust/1.0, merona-canary/0.1,
+#     merona-stats/1.0, sift/0.1, pulse/0.1) — these label OUR responses to
+#     inbound requests (the HTTP `Server:` header), the opposite direction
+#     from everything else here. A seller never receives one.
+#   * ventures/pulse's `pulse-monitor/0.1` and ventures/receipt's
+#     `receipt-probe/0.1` — real outbound probes, but neither literal
+#     contains "merona" or claims this identity, so a seller confused about
+#     "is this merona?" was never going to suspect them either; claiming them
+#     here would be inaccurate, not helpful.
+#   * merona-outreach/1.0 (outreach/send.py) — its one call target is the
+#     Resend transactional-email API (a vendor merona pays), never a seller.
+#   * the wayback harvester (triangulation/wayback/harvest.py) — its only
+#     target is archive.org, a third-party archive, not a seller or tracker.
+#
+# `rpc_or_internal`: real outbound UAs, "merona"-branded or from the audited
+# family, that we still exclude from the seller-facing list because their
+# only targets are blockchain RPC nodes / block explorers / attestation
+# infra, OR merona's own live API (self-targeting conformance/regression
+# tooling) — none of which is a seller who'd need this registry either, but
+# listed (not silently dropped) so the registry is still a complete map of
+# "everything that says merona" for anyone auditing the claim.
+CRAWLERS = {
+    "provider": "merona",
+    "contact": "hello@merona.io",
+    "policy": "read-only probes never pay; the paid sweep pays exactly once "
+             "per seller and identifies itself; no hammering/retries",
+    "user_agents": [
+        {"ua": "merona-collectors/0.1 (read-only research; hello@merona.io)",
+         "purpose": "registry/directory/catalog collectors (foundation, "
+                    "mcpdirs, sdkstats, agent402, rivals, facwatch, names, "
+                    "facstatus, ardcat, farcaster — ardcat also requests "
+                    "/.well-known/ai-catalog.json; the same literal is "
+                    "embedded, prefixed with a browser UA, in okxasp.py, "
+                    "see the entry below)",
+         "pays": False, "source": "collectors/foundation.py"},
+        {"ua": "merona-collectors/0.1 (independent research; read-only; "
+               "contact: hello@merona.io)",
+         "purpose": "nightly Bazaar catalog/quote/diff snapshot collector",
+         "pays": False, "source": "collectors/collect.py"},
+        {"ua": "Mozilla/5.0 (X11; Linux x86_64) merona-collectors/0.1 "
+               "(read-only research; hello@merona.io)",
+         "purpose": "okx.ai ASP-catalog watch — polite HTML fetching of "
+                    "public pages; the browser-style prefix is there "
+                    "because okx.ai's blind /api paths are WAF'd, not to "
+                    "hide the merona-collectors identity riding inside it",
+         "pays": False, "source": "collectors/okxasp.py"},
+        {"ua": "merona-pulse/0.1 (x402 shape survey; hello@merona.io)",
+         "purpose": "x402 body-shape survey (x402Version/scheme/network "
+                    "drift) over the deterministic endpoint rotation",
+         "pays": False, "source": "collectors/v2watch.py"},
+        {"ua": "x402-index-liveness/1.0 (+read-only probe)",
+         "purpose": "nightly liveness + 402-shape probe; never sends "
+                    "X-PAYMENT",
+         "pays": False, "source": "indexer/instrumentation.py"},
+        {"ua": "x402-endpoint-quality-audit/0.1 (independent research; "
+               "read-only; contact: audit maintainer via repo)",
+         "purpose": "Phase-2 UNPAID liveness sweep (pipeline/liveness_"
+                    "probe.py) — same UA prefix as the PAID pilot below "
+                    "but a different literal and pays:false; check the "
+                    "full string, not just the prefix",
+         "pays": False, "source": "pipeline/config.yaml"},
+        {"ua": "x402-endpoint-quality-audit/0.1 (paid delivery verification "
+               "pilot; one payment per endpoint)",
+         "purpose": "Phase-2.5 paid-delivery pilot sweep (pipeline/paid/"
+                    "paid_probe.mjs) — one settled payment per endpoint, "
+                    "ever; ledgered so a re-run cannot double-pay",
+         "pays": True, "source": "pipeline/paid/paid_probe.mjs"},
+        {"ua": "merona-payprobe/0.1 (genuine paid probe; hello@merona.io)",
+         "purpose": "Phase-3 genuine-payer probe (attest/payprobe.py) — "
+                    "the LIVE ongoing paid prober: its receipts ledger "
+                    "(data/indexer/payprobe/receipts.jsonl) is exactly what "
+                    "GET /v1/delivery and the charged_unserved/delivery_"
+                    "verified evidence above are built from",
+         "pays": True, "source": "attest/payprobe.py"},
+        {"ua": "merona-contact/0.1 (operator outreach; hello@merona.io)",
+         "purpose": "post-sweep contact-surface reconnaissance on sellers "
+                    "that need notifying (402 body, /.well-known/"
+                    "security.txt, landing page) — read-only, never writes",
+         "pays": False, "source": "attest/contact_harvest.py"},
+        {"ua": "x402-audit-indexer/1.0",
+         "purpose": "default UA for the Base/Solana chain-read clients "
+                    "(indexer/chain.py, indexer/solana_chain.py) — mostly "
+                    "hits RPC, but the identical prefix is what "
+                    "reconciliation/surplus-validation below extend",
+         "pays": False, "source": "indexer/reconcile.py"},
+        {"ua": "x402-index-recon/1.0 (+daily reconciliation)",
+         "purpose": "daily cross-tracker reconciliation against x402scan's "
+                    "public pages (reachability + best-effort headline "
+                    "numbers) — read-only",
+         "pays": False, "source": "indexer/instrumentation.py"},
+    ],
+    "rpc_or_internal": [
+        {"ua": "merona-chainsignals-gas/1.0", "reason": "rpc (HyperSync)",
+         "source": "triangulation/chainsignals/gas_extract.py"},
+        {"ua": "merona-onramp-hopfetch/1.0", "reason": "rpc (HyperSync)",
+         "source": "triangulation/onramp/hop_fetch.py"},
+        {"ua": "merona-backfill/1.0", "reason": "rpc (HyperSync)",
+         "source": "indexer/backfill_extract_hypersync.py"},
+        {"ua": "merona-wash-history/1.0", "reason": "rpc (HyperSync)",
+         "source": "analytics/wash_history.py"},
+        {"ua": "merona-tempo-index/1.0", "reason": "rpc (Tempo L1 public "
+                                                    "RPC)",
+         "source": "tempo/extract_tempo.py"},
+        {"ua": "merona-verify-evidence/1.0",
+         "reason": "rpc (Base) + self-published anchors repo on GitHub",
+         "source": "conformance/verify_evidence.py"},
+        {"ua": "merona-conformance-checker/1.0",
+         "reason": "self-targeting — exercises merona's own live API, "
+                   "never a third party",
+         "source": "conformance/check.py"},
+        {"ua": "x402-index-wash/1.0 (+read-only analysis)",
+         "reason": "rpc", "source": "indexer/wash.py"},
+        {"ua": "x402-index-payer-kinds/1.0 (+read-only analysis)",
+         "reason": "rpc", "source": "indexer/enrich_payer_kinds.py"},
+        {"ua": "x402-index-unitecon/1.0", "reason": "rpc",
+         "source": "indexer/instrumentation.py"},
+        {"ua": "x402-endpoint-quality-audit/0.1",
+         "reason": "rpc (Base block explorer) — settlement-truth "
+                  "reconciliation for the paid-probe ledger, not a seller "
+                  "fetch despite sharing the family prefix",
+         "source": "pipeline/paid/reconcile_chain.mjs"},
+        {"ua": "merona-attest/0.1 (hello@merona.io)",
+         "reason": "rpc/EAS attestation infra (identity_attest.py, "
+                  "revoke.py, register_schema.py, anchor_attest.py, "
+                  "basename.py) — publishing merona's own on-chain "
+                  "attestations, never a seller fetch",
+         "source": "attest/identity_attest.py"},
+    ],
+    "note": "canonical registry; traffic claiming merona that matches none "
+           "of these can be verified via contact",
 }
 
 

@@ -679,10 +679,13 @@ SELLER_INDEX_TIERS = [
     ("busy",        10, 50),
 ]
 
-# Same six chains the rest of the nightly precompute walks (build_x402_scoped,
-# build_coverage_fingerprint) — kept as a local tuple here rather than a new
-# module constant so this function's chain list is easy to audit in isolation.
-_SELLER_INDEX_CHAINS = ("base", "polygon", "avalanche", "optimism", "arbitrum", "solana")
+# Only chains with registry relayers can be x402-SCOPED (facilitator IN
+# registry); the watched-but-unattributed chains (avalanche/optimism/arbitrum)
+# have no registry set, so a seller index there could only be the raw
+# EIP-3009 superset — publishing that under an "x402 economy" label is
+# exactly the mirage this index exists to call out, so those chains are
+# excluded rather than mislabeled.
+_SELLER_INDEX_CHAINS = ("base", "polygon", "solana")
 
 
 def build_seller_index(store: Store) -> dict:
@@ -690,19 +693,39 @@ def build_seller_index(store: Store) -> dict:
     "the real x402 economy": instead of one easily-inflated headline seller
     count, publish how many sellers clear each evidence bar.
 
-    Reuses the EXACT scope write_seller_snapshot's per-seller CSV aggregates
-    from (permit2 rows excluded + the WITNESSED-regime floor via
-    _witnessed_filter) so these tier counts always agree with the published
-    snapshot — computing over a different scope here would silently diverge
-    from the numbers anchored in seller_aggregates.csv.
+    SCOPE (restated 2026-08-11): x402-SCOPED — facilitator IN the registry
+    relayer set, witnessed regime. The original version reused the seller
+    snapshot's scope (ALL gasless-USDC settlements, no facilitator filter),
+    which is the EIP-3009 SUPERSET — it published 104,814 Base "sellers"
+    under an x402 label when the x402-scoped count was 89,337 (and the
+    active tier 2,094 vs the scoped 1,184). Labeling superset numbers as
+    the x402 economy is the exact inflation merona exists to correct, so
+    the tiers now use the same facilitator scope as the dashboard's
+    headline seller count (build_x402_scoped/scoped_stats) — the 'any'
+    tier and chains[ch].sellers must agree by construction.
 
     One SQL statement per chain: a per-seller grouped subquery (payers/volume)
     wrapped in a single conditional-aggregation pass that buckets every tier at
     once — no per-seller Python loop over the ~100k Base sellers.
     """
     wf = _witnessed_filter(store)
+    try:
+        by_chain = json.load(open(REGISTRY)).get("relayers_by_chain", {})
+    except Exception:
+        by_chain = {}
     tiers_by_chain: dict = {}
     for ch in _SELLER_INDEX_CHAINS:
+        # Registry relayers, inlined as quoted literals (never user input:
+        # the registry is our own reviewed file). Inlining keeps the query
+        # parameterless — see the '%'-placeholder comment below. Solana
+        # addresses are base58/case-sensitive: no lowercasing beyond what
+        # the registry itself stores.
+        rel = by_chain.get(ch) or []
+        if not rel:
+            continue   # no registry set -> not scopable -> no index row
+        rel_sql = ",".join(
+            "'" + a.replace("'", "") + "'"
+            for a in (r.lower() if ch != "solana" else r for r in rel))
         # Conditional SUM/CASE pair per tier: count of qualifying sellers, and
         # the volume summed ONLY over those qualifying sellers (not all
         # sellers) — so "substantial" volume_usd means "volume earned by
@@ -711,24 +734,23 @@ def build_seller_index(store: Store) -> dict:
             f"SUM(CASE WHEN payers>={mp} AND vol>={mu * 1_000_000} THEN 1 ELSE 0 END), "
             f"COALESCE(SUM(CASE WHEN payers>={mp} AND vol>={mu * 1_000_000} THEN vol ELSE 0 END), 0)"
             for _, mp, mu in SELLER_INDEX_TIERS)
-        # EXECUTED WITH NO BOUND PARAMETERS, and the chain name is inlined —
-        # load-bearing, not style. psycopg only treats a literal '%' in the SQL
-        # as a format placeholder once params are passed, so binding (ch,)
-        # against the '%\_permit2' filter below raised on Postgres; the
-        # try/except around this function then shipped a blob with no
-        # seller_index at all, silently, for a full nightly (2026-08-10).
-        # SQLite ignores '%' entirely, so no test could have caught it. Every
-        # other permit2-filtered query in this file is parameterless for the
-        # same reason. `ch` is from the hardcoded _SELLER_INDEX_CHAINS tuple —
-        # never user input, same precedent as _witnessed_filter inlining ints
-        # from our own meta. If you ever add a parameter here, escape every
-        # literal '%' as '%%' first.
+        # EXECUTED WITH NO BOUND PARAMETERS — load-bearing, not style. An
+        # earlier version bound (ch,) against SQL containing a literal '%'
+        # (the then-present permit2 LIKE filter); psycopg treats '%' as a
+        # format placeholder the moment params are bound, the query raised,
+        # and the try/except around this function shipped a blob with no
+        # seller_index at all for a full nightly (2026-08-10). SQLite ignores
+        # '%', so no test caught it. Chain and relayers are inlined from our
+        # own reviewed constants/registry — never user input. If you ever add
+        # a parameter here, escape any literal '%' as '%%' first. (The
+        # facilitator IN filter also implicitly excludes '<chain>_permit2'
+        # rows: those never carry registry facilitators.)
         sql = (
             r"SELECT " + agg_cols + " FROM (SELECT seller, "
             # external payers only: a seller paying itself is not demand.
             r"COUNT(DISTINCT CASE WHEN payer<>seller THEN payer END) payers, "
             rf"{store.volume_agg()} vol FROM settlements "
-            rf"WHERE chain='{ch}' AND chain NOT LIKE '%\_permit2' ESCAPE '\'"
+            rf"WHERE chain='{ch}' AND facilitator IN ({rel_sql})"
             + wf +
             r" GROUP BY seller) t")
         row = store.db.execute(sql).fetchone()
@@ -742,7 +764,8 @@ def build_seller_index(store: Store) -> dict:
             })
         tiers_by_chain[ch] = tiers
     return {
-        "method": ("distinct external payers = payers excluding self-pay; "
+        "method": ("x402-scoped: settlements via registry facilitators only; "
+                   "distinct external payers = payers excluding self-pay; "
                    "lifetime USDC volume"),
         "tiers": tiers_by_chain,
     }
@@ -809,6 +832,37 @@ def build_dashboard_metrics(store: Store) -> dict:
                 store.db.rollback()
             except Exception:
                 pass
+
+    # Payer account-kind split (indexer/enrich_payer_kinds.py): EOA vs
+    # EIP-7702-delegated EOA vs contract, among x402-scoped payers CHECKED so
+    # far — a partial-coverage count, not "all payers". Isolated per chain,
+    # like the merchant-tier loop just above: one chain's failure never blanks
+    # another's row, and a chain with zero checked payers gets no key at all
+    # rather than a misleading all-zero row. NOT surfaced on
+    # serving/stats_server.py yet — this stays an internal/precomputed-only
+    # figure until enough coverage has accumulated to be worth publishing
+    # (see enrich_payer_kinds.py's coverage-honesty prints for the run-by-run
+    # backlog); wire it into the server once that bar is cleared.
+    for ch in list(chains):
+        try:
+            counts = store.payer_kind_counts(ch)
+        except Exception:
+            counts = {}
+            try:
+                store.db.rollback()
+            except Exception:
+                pass
+        if not counts:
+            continue
+        entry = {"eoa": counts.get("eoa", 0),
+                 "eoa_delegated": counts.get("eoa_delegated", 0),
+                 "contract": counts.get("contract", 0),
+                 "checked": sum(counts.values())}
+        payers = chains[ch].get("payers")   # already computed above, cheap reuse
+        if payers is not None:
+            entry["payers"] = payers
+        chains[ch]["payer_kinds"] = entry
+
     try:
         cd = store.db.execute(
             "SELECT MAX(measured_date) FROM clean_metrics").fetchone()[0]
@@ -1170,6 +1224,26 @@ def main() -> None:
     except Exception as e:
         print(f"[enrich] runner error (isolated; ledger unaffected): {e}",
               file=sys.stderr)
+
+    # Payer account-kind enrichment (indexer/enrich_payer_kinds.py) — classify
+    # distinct x402-scoped payers as EOA / EIP-7702-delegated EOA / contract
+    # via eth_getCode. Same isolation shape as relayer enrichment just above:
+    # observe-only (writes only payer_kinds, never touches settlements),
+    # bounded per run, resumable. Kill switch X402_PAYER_KINDS=0 for an
+    # RPC-quota emergency without touching the rest of the nightly run.
+    if os.environ.get("X402_PAYER_KINDS", "1") == "1":
+        try:
+            import enrich_payer_kinds
+            enrich_payer_kinds.run(store)
+        except Exception as e:
+            print(f"[payer_kinds] runner error (isolated; ledger unaffected): {e}",
+                  file=sys.stderr)
+            try:
+                store.db.rollback()
+            except Exception:
+                pass
+    else:
+        print("[payer_kinds] disabled via X402_PAYER_KINDS=0")
 
     # Passive instrumentation — STRICTLY AFTER the settlement index + snapshot.
     # Fully isolated: writes only to its own tables, never raises, cannot corrupt

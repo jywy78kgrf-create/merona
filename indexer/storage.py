@@ -387,6 +387,24 @@ class _StoreBase:
                   measured_at   TEXT NOT NULL,
                   PRIMARY KEY (measured_date, chain)
                 )""",
+            # Per-payer on-chain account kind (indexer/enrich_payer_kinds.py):
+            # EOA vs EIP-7702-delegated EOA vs contract (ERC-1271 smart
+            # account), keyed by (chain, payer) rather than per-day like the
+            # instrumentation tables above — a payer's kind is a property of
+            # the ADDRESS, not of a measurement day, though it CAN change
+            # (7702 lets a plain EOA gain delegation code later), which is why
+            # record_payer_kind upserts rather than inserting a fresh row per
+            # check. code_prefix is the first 8 bytes of the code (audit
+            # trail), NULL for a plain EOA. Not scoped to Solana — see that
+            # module's docstring for why.
+            """CREATE TABLE IF NOT EXISTS payer_kinds (
+                  chain       TEXT NOT NULL,
+                  payer       TEXT NOT NULL,
+                  kind        TEXT NOT NULL,
+                  code_prefix TEXT,
+                  checked_at  TEXT NOT NULL,
+                  PRIMARY KEY (chain, payer)
+                )""",
         ]
 
     def _init_schema(self) -> None:
@@ -716,6 +734,31 @@ class _StoreBase:
              r.get("median_payment_usd"), r.get("fee_over_payment"),
              r.get("native_price_usd"), r.get("error"), measured_at))
         self.db.commit()
+
+    def record_payer_kind(self, chain: str, payer: str, kind: str,
+                          code_prefix: str | None, checked_at: str) -> None:
+        """Upsert one payer's on-chain account kind. NB: does NOT commit — the
+        enrichment run batches one commit per RPC batch of addresses (see
+        enrich_payer_kinds.py), the same shape as enrich_relayers.py's
+        per-block-chunk commit, not per-row. ON CONFLICT DO UPDATE (not
+        DO NOTHING): a kind can change over time — EIP-7702 lets a
+        previously-plain EOA gain delegation code later — so a re-check must
+        overwrite the stored kind, not be silently ignored."""
+        self.db.execute(
+            self.q("INSERT INTO payer_kinds(chain,payer,kind,code_prefix,"
+                   "checked_at) VALUES(?,?,?,?,?) "
+                   "ON CONFLICT(chain,payer) DO UPDATE SET "
+                   "kind=excluded.kind,code_prefix=excluded.code_prefix,"
+                   "checked_at=excluded.checked_at"),
+            (chain, payer, kind, code_prefix, checked_at))
+
+    def payer_kind_counts(self, chain: str) -> dict:
+        """{kind: n} for one chain's checked payers so far — the dashboard
+        payer_kinds blob's input (see build_dashboard_metrics)."""
+        rows = self.db.execute(
+            self.q("SELECT kind, COUNT(*) FROM payer_kinds WHERE chain=? "
+                   "GROUP BY kind"), (chain,)).fetchall()
+        return {k: int(n) for k, n in rows}
 
     def record_endpoint_score(self, measured_date: str, origin: str, r: dict,
                               measured_at: str) -> None:

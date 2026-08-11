@@ -62,7 +62,13 @@ def _lookup(status, record):
 
 
 # --- charged_unserved -----------------------------------------------------------
-def test_charged_unserved_is_fail_first_party_probe():
+def test_charged_unserved_is_fail_first_party_probe(monkeypatch):
+    # DISCOVERY_BASIS off for this test: it pins the exact basis[] shape
+    # with NO discovery_basis key, independent of whether this checkout
+    # happens to have a readable data/processed/bazaar_resources.csv — see
+    # test_curated_entry_carries_discovery_basis_when_configured below for
+    # the on case.
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", None)
     delivery = {"status": "charged_unserved", "as_of": "2026-08-07",
                 "settlement_tx": "0x" + "11" * 32, "http_status": 402}
     record = _record(grade="A", score=92, action="INVESTIGATE",
@@ -116,7 +122,8 @@ def test_adverse_finding_decline_is_also_grade_decline():
 
 
 # --- delivery_verified + A/B -> PASS -----------------------------------------------
-def test_delivery_verified_grade_a_is_pass_with_both_basis_entries():
+def test_delivery_verified_grade_a_is_pass_with_both_basis_entries(monkeypatch):
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", None)      # see the charged_unserved test above
     delivery = {"status": "delivery_verified", "as_of": "2026-08-07"}
     record = _record(grade="A", score=95, action="PROCEED", delivery=delivery)
     code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
@@ -131,6 +138,45 @@ def test_delivery_verified_grade_a_is_pass_with_both_basis_entries():
          "observed_at": VERIFICATION["snapshot_date"]},
     ]
     assert obj["score"] == 0.95
+
+
+# --- discovery_basis (x402-foundation/x402#2300 commitment #1) -------------------
+def test_load_discovery_basis_on_a_real_file(tmp_path):
+    f = tmp_path / "bazaar_resources.csv"
+    f.write_text("resource,seller\nhttps://x/y,0xseller\n")
+    basis = api._load_discovery_basis(f)
+    assert basis["catalog"] == "bazaar"
+    assert len(basis["snapshot_sha256"]) == 64
+    assert all(c in "0123456789abcdef" for c in basis["snapshot_sha256"])
+    # ISO date, derived from the file's mtime, not baked into the CSV
+    datetime.fromisoformat(basis["snapshot_date"])
+
+
+def test_load_discovery_basis_missing_file_is_none(tmp_path):
+    assert api._load_discovery_basis(tmp_path / "does_not_exist.csv") is None
+
+
+def test_curated_entry_omits_discovery_basis_when_none(monkeypatch):
+    """The general rule this whole feature follows: absent, never null."""
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", None)
+    delivery = {"status": "charged_unserved", "as_of": "2026-08-07"}
+    record = _record(grade="F", score=10, action="DECLINE", delivery=delivery)
+    code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
+    assert "discovery_basis" not in obj["basis"][0]
+
+
+def test_curated_entry_carries_discovery_basis_when_configured(monkeypatch):
+    fake_basis = {"catalog": "bazaar", "snapshot_sha256": "a" * 64,
+                  "snapshot_date": "2026-08-08"}
+    monkeypatch.setattr(api, "DISCOVERY_BASIS", fake_basis)
+    delivery = {"status": "charged_unserved", "as_of": "2026-08-07"}
+    record = _record(grade="F", score=10, action="DECLINE", delivery=delivery)
+    code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
+    assert obj["basis"][0]["discovery_basis"] == fake_basis
+    # ONLY the curated first_party_probe entry gets it — never behavioral
+    # or attested, which derive from merona's own scoring, not the sweep.
+    for entry in obj["basis"][1:]:
+        assert "discovery_basis" not in entry
 
 
 def test_delivery_verified_grade_c_falls_through_to_grade_marginal():
