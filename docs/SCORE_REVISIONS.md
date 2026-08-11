@@ -258,3 +258,48 @@ of history, a settled-but-unserved charge is something that happened).
 `delivery_verified` adds a dated reason but never upgrades the action —
 delivering once is worth recording, not worth overriding the grade.
 Pinned in test_suggested_action.py.
+
+## Clean metrics — single-payer concentration exclusion — 2026-08-10
+
+Trigger: cohort audit of the published Base clean volume found one seller,
+BlockRun (`0xe9030014f5dae217d0a152f02a043567b16c1abf`), was **38.8% of the
+entire published clean Base volume** — and 99.58% of BlockRun's own volume
+came from a single payer. None of the existing wash detectors could see it:
+self-pay requires payer==seller (BlockRun has none), reciprocal requires a
+settlement-visible A→B/B→A pair (none), the funded-payer lookback requires
+the seller to have SENT USDC to its own payers (none) — all three look for
+money coming *back* to the seller. A one-directional monoculture, one payer
+buying almost everything a seller ever sold, has no such edge for any of
+them to find. `scores.py` v4.2 (above) already caps grades on top-payer TX
+share ≥ 90%; clean *volume* had no equivalent, so a monoculture seller could
+lose its A/B letter grade while still counting in full toward the number we
+publish as "clean."
+
+Fix: `indexer/wash.py` adds a fourth wash pattern, computed generically over
+every scoped seller (not sampled, not a curated address list) via one SQL
+statement per chain — per-seller total volume joined to a per-(seller,payer)
+max-volume subquery, the same shape and cost class as the existing
+reciprocal self-join. A seller is concentration-flagged when ALL of:
+top-payer volume share ≥ 95% (`X402_WASH_CONC_SHARE`), tx count ≥ 200
+(`X402_WASH_CONC_MIN_TX`), and total volume ≥ $500
+(`X402_WASH_CONC_MIN_VOL`) — the tx/volume floors exist so a brand-new
+seller's first customer (100% share on day one, honestly) is never flagged.
+Isolated with the same try/except + rollback discipline as the reciprocal
+scan: a scan failure records nothing and the coverage note says
+"concentration scan unavailable," never implying a clean pass.
+
+This is a **separate, named exclusion bucket**, not silently folded into
+the existing wash-flagged count: the `coverage_note` on every
+`clean_metrics` row carries the bucket's seller count, settlements, and
+excluded USD (the table has a fixed column set and no migration machinery,
+so the note — this table's existing audit channel — is where the
+decomposition persists), and every matched seller gets a `wash_signals`
+evidence row with its share and the thresholds applied. A seller already
+caught by self-pay/reciprocal/funded-payer/cycles/batch flags is counted
+once, in that bucket; concentration only adds sellers no other detector
+caught.
+
+**Expected restatement**: Base clean volume drops ~38.8% on the first
+post-deploy nightly (BlockRun alone), pending whatever else the wider scan
+now catches that the curated CSV never listed. Pinned in
+`indexer/tests/test_wash_concentration.py`.

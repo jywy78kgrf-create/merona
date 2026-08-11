@@ -388,6 +388,13 @@ def compute():
                 "chains": chains, "since": since,
                 "totals": m.get("totals", {}),
                 "instr": m.get("instr") or {},
+                # Real Seller Index — the nightly precompute's per-chain tier
+                # ladder (see daily_snapshot.build_seller_index). This dict is
+                # hand-curated (not `**m`), so a new blob key is silently
+                # dropped unless surfaced here explicitly; None when the
+                # nightly hasn't regenerated it yet, and the dashboard hides
+                # the section on a missing key.
+                "seller_index": m.get("seller_index"),
                 "ledger": ledger, "tempo": tempo,
                 "cycle": cycle, "health": health}
     finally:

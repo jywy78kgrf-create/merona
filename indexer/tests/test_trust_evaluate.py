@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,9 +26,14 @@ sys.path.insert(0, str(ROOT / "serving"))
 import trust_api as api                                    # noqa: E402
 
 SELLER = "0x" + "ab" * 20
-VERIFICATION = {"snapshot_date": "2026-08-08",
-                "snapshot_sha256": "f" * 64,
-                "anchors": "https://github.com/example/merona-anchors"}
+# WHY no "anchors" key by default: most fixtures below care about the
+# curated/behavioral shape only, not the attested entry — anchors is added
+# explicitly (ANCHORED_VERIFICATION) in the handful of tests that exercise
+# the attested-entry path, so those stay the one place a reader needs to
+# think about it.
+VERIFICATION = {"snapshot_date": "2026-08-08", "snapshot_sha256": "f" * 64}
+ANCHORED_VERIFICATION = dict(VERIFICATION,
+                             anchors="https://github.com/example/merona-anchors")
 
 
 def _req(**kw):
@@ -38,9 +44,11 @@ def _req(**kw):
 
 
 def _record(grade=None, score=None, provisional=False, action="PROCEED",
-           delivery=None):
+           delivery=None, verification=None):
     r = {"chain": "base", "seller": SELLER, "grade": grade, "score": score,
-         "provisional": provisional, "verification": dict(VERIFICATION),
+         "provisional": provisional,
+         "verification": dict(verification if verification is not None
+                              else VERIFICATION),
          "suggested_action": {"action": action}}
     if delivery:
         r["delivery"] = delivery
@@ -64,7 +72,11 @@ def test_charged_unserved_is_fail_first_party_probe():
     assert code == 200
     assert obj["decision"] == "FAIL"
     assert obj["reason_code"] == "charged_unserved"
-    assert obj["basis"] == ["first_party_probe"]
+    # typed basis[]: a curated first-party-probe entry with a chain-prefixed
+    # tx ref (block-provenance: FAIL rests on curated evidence here)
+    assert obj["basis"] == [{"class": "curated", "kind": "first_party_probe",
+                             "ref": "base:tx:" + "0x" + "11" * 32,
+                             "observed_at": "2026-08-07"}]
     assert obj["ttl"] == api.EVAL_CHARGED_TTL
     assert obj["evidence_uri"].startswith("sha256:")
     assert len(obj["evidence_uri"]) == len("sha256:") + 64
@@ -92,7 +104,9 @@ def test_decline_action_is_fail_grade_decline():
     code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
     assert obj["decision"] == "FAIL"
     assert obj["reason_code"] == "grade_decline"
-    assert obj["basis"] == ["behavioral"]
+    assert obj["basis"] == [{"class": "behavioral", "kind": "seller_score",
+                             "ref": obj["evidence_uri"],
+                             "observed_at": VERIFICATION["snapshot_date"]}]
 
 
 def test_adverse_finding_decline_is_also_grade_decline():
@@ -108,7 +122,14 @@ def test_delivery_verified_grade_a_is_pass_with_both_basis_entries():
     code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
     assert obj["decision"] == "PASS"
     assert obj["reason_code"] == "delivery_verified"
-    assert obj["basis"] == ["first_party_probe", "behavioral"]
+    # curated (no settlement_tx on this delivery -> ref None) + behavioral
+    assert obj["basis"] == [
+        {"class": "curated", "kind": "first_party_probe",
+         "ref": None, "observed_at": "2026-08-07"},
+        {"class": "behavioral", "kind": "seller_score",
+         "ref": obj["evidence_uri"],
+         "observed_at": VERIFICATION["snapshot_date"]},
+    ]
     assert obj["score"] == 0.95
 
 
@@ -140,7 +161,26 @@ def test_grade_b_no_delivery_is_grade_pass():
     record = _record(grade="B", score=78, action="PROCEED")
     code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
     assert obj["decision"] == "PASS" and obj["reason_code"] == "grade_pass"
-    assert obj["basis"] == ["behavioral"]
+    assert obj["basis"] == [{"class": "behavioral", "kind": "seller_score",
+                             "ref": obj["evidence_uri"],
+                             "observed_at": VERIFICATION["snapshot_date"]}]
+
+
+def test_grade_pass_a_basis_ref_and_expiry():
+    """grade_pass with a numeric A score: behavioral entry carries the
+    sha256 ref + snapshot observed_at, no null_reason key at all (score is
+    not null), and expires_at is exactly issued_at + ttl."""
+    record = _record(grade="A", score=90, action="PROCEED")
+    code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
+    assert obj["decision"] == "PASS" and obj["reason_code"] == "grade_pass"
+    assert obj["evidence_uri"] == "sha256:" + "f" * 64
+    assert obj["basis"] == [{"class": "behavioral", "kind": "seller_score",
+                             "ref": obj["evidence_uri"],
+                             "observed_at": VERIFICATION["snapshot_date"]}]
+    assert "null_reason" not in obj
+    issued = datetime.fromisoformat(obj["issued_at"])
+    expires = datetime.fromisoformat(obj["expires_at"])
+    assert (expires - issued).total_seconds() == api.EVAL_DEFAULT_TTL
 
 
 def test_bare_f_without_decline_is_still_fail_grade_decline():
@@ -161,6 +201,7 @@ def test_unknown_wallet_is_uncertain_insufficient_evidence_score_null():
     assert obj["decision"] == "UNCERTAIN"
     assert obj["reason_code"] == "insufficient_evidence"
     assert obj["score"] is None
+    assert obj["null_reason"] == "insufficient_signal"
     assert obj["basis"] == []
     assert obj["evidence_uri"] is None
 
@@ -173,6 +214,27 @@ def test_unrated_tier_no_grade_is_also_insufficient_evidence():
     assert obj["decision"] == "UNCERTAIN"
     assert obj["reason_code"] == "insufficient_evidence"
     assert obj["score"] is None
+    assert obj["null_reason"] == "insufficient_signal"
+
+
+# --- attested basis entry (EAS anchors) --------------------------------------------
+def test_anchors_present_adds_attested_entry():
+    record = _record(grade="A", score=90, action="PROCEED",
+                     verification=ANCHORED_VERIFICATION)
+    code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
+    classes = [b["class"] for b in obj["basis"]]
+    assert classes == ["behavioral", "attested"]
+    attested = obj["basis"][1]
+    assert attested["kind"] == "eas_anchor"
+    assert attested["ref"] == obj["evidence_uri"]
+    assert attested["observed_at"] == ANCHORED_VERIFICATION["snapshot_date"]
+
+
+def test_no_anchors_means_no_attested_entry():
+    # default VERIFICATION carries no "anchors" key
+    record = _record(grade="A", score=90, action="PROCEED")
+    code, obj = api._trust_evaluate(_req(), lookup=_lookup(200, record))
+    assert "attested" not in [b["class"] for b in obj["basis"]]
 
 
 # --- direction=buyer ---------------------------------------------------------------
@@ -186,6 +248,48 @@ def test_direction_buyer_is_payer_scoring_not_available():
     assert obj["decision"] == "UNCERTAIN"
     assert obj["reason_code"] == "payer_scoring_not_available"
     assert obj["score"] is None and obj["basis"] == []
+    assert obj["null_reason"] == "insufficient_signal"
+
+
+# --- block-provenance (draft-02) ----------------------------------------------------
+def test_block_provenance_every_fail_has_curated_or_behavioral():
+    """draft-02: a FAIL decision must rest on curated or behavioral evidence
+    — never attested/community alone. Sweep every FAIL-producing fixture
+    used elsewhere in this file and pin the invariant structurally, not just
+    per-test (the assertion inside _eval_result already enforces this at
+    call time; this test pins it at the wire-shape level too)."""
+    fixtures = [
+        (200, _record(grade="F", score=10, action="DECLINE")),
+        (200, _record(grade="F", score=None, action="DECLINE")),
+        (200, _record(grade="F", score=12, provisional=True,
+                      action="INVESTIGATE")),
+    ]
+    delivery = {"status": "charged_unserved", "as_of": "2026-08-07",
+                "settlement_tx": "0x" + "33" * 32, "http_status": 402}
+    fixtures.append((200, _record(grade="A", score=92, action="INVESTIGATE",
+                                  delivery=delivery)))
+    seen_fail = False
+    for status, record in fixtures:
+        code, obj = api._trust_evaluate(_req(), lookup=_lookup(status, record))
+        assert obj["decision"] == "FAIL"
+        seen_fail = True
+        assert any(b["class"] in ("curated", "behavioral")
+                  for b in obj["basis"]), obj["basis"]
+    assert seen_fail
+
+
+# --- provider descriptor + field spec ------------------------------------------------
+def test_provider_descriptor_and_spec_are_importable_and_serializable():
+    assert json.dumps(api.TRUST_PROVIDER_DESCRIPTOR)
+    assert json.dumps(api.TRUST_API_SPEC)
+    assert api.TRUST_PROVIDER_DESCRIPTOR["endpoint"]["url"].endswith(
+        "/v1/trust/evaluate")
+
+
+def test_spec_lists_all_four_evidence_classes():
+    classes = set(api.TRUST_API_SPEC["response"]["basis"]["classes"])
+    assert classes == {"curated", "behavioral", "community", "attested"}
+    assert classes == set(api.TRUST_PROVIDER_DESCRIPTOR["evidence_classes"])
 
 
 def test_direction_defaults_to_seller_when_absent():
@@ -203,6 +307,7 @@ def test_missing_subject_wallet_is_unknown_subject():
     assert code == 200
     assert obj["reason_code"] == "unknown_subject"
     assert obj["decision"] == "UNCERTAIN" and obj["score"] is None
+    assert obj["null_reason"] == "unknown_subject"
 
 
 def test_unsupported_chain():
@@ -212,6 +317,7 @@ def test_unsupported_chain():
     code, obj = api._trust_evaluate(body)
     assert code == 200
     assert obj["reason_code"] == "unsupported_chain"
+    assert obj["null_reason"] == "unsupported_chain"
 
 
 def test_chain_falls_back_to_resource_amount_chain():

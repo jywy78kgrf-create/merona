@@ -665,6 +665,89 @@ def build_instr_metrics(store: Store) -> dict:
     return out
 
 
+# "Real Seller Index" tiers: an increasing evidence bar a seller must clear
+# (distinct EXTERNAL payers — payer <> seller, so a wallet paying itself never
+# counts as demand — plus lifetime USDC volume) rather than one headline
+# "N sellers" number that can't distinguish a seller with one whale payer from
+# one with genuine repeat demand. (label, min_payers, min_usd). min_usd is
+# DOLLARS (converted to base units, 1e6 = $1, inside the query).
+SELLER_INDEX_TIERS = [
+    ("any",         0,  0),    # every seller ever paid, no bar at all
+    ("active",      2,  1),    # real repeat demand
+    ("established", 3,  5),
+    ("substantial", 5,  10),
+    ("busy",        10, 50),
+]
+
+# Same six chains the rest of the nightly precompute walks (build_x402_scoped,
+# build_coverage_fingerprint) — kept as a local tuple here rather than a new
+# module constant so this function's chain list is easy to audit in isolation.
+_SELLER_INDEX_CHAINS = ("base", "polygon", "avalanche", "optimism", "arbitrum", "solana")
+
+
+def build_seller_index(store: Store) -> dict:
+    """Per-chain gradient of seller counts at increasing evidence thresholds —
+    "the real x402 economy": instead of one easily-inflated headline seller
+    count, publish how many sellers clear each evidence bar.
+
+    Reuses the EXACT scope write_seller_snapshot's per-seller CSV aggregates
+    from (permit2 rows excluded + the WITNESSED-regime floor via
+    _witnessed_filter) so these tier counts always agree with the published
+    snapshot — computing over a different scope here would silently diverge
+    from the numbers anchored in seller_aggregates.csv.
+
+    One SQL statement per chain: a per-seller grouped subquery (payers/volume)
+    wrapped in a single conditional-aggregation pass that buckets every tier at
+    once — no per-seller Python loop over the ~100k Base sellers.
+    """
+    wf = _witnessed_filter(store)
+    tiers_by_chain: dict = {}
+    for ch in _SELLER_INDEX_CHAINS:
+        # Conditional SUM/CASE pair per tier: count of qualifying sellers, and
+        # the volume summed ONLY over those qualifying sellers (not all
+        # sellers) — so "substantial" volume_usd means "volume earned by
+        # substantial-tier sellers", the number quoted in the dashboard copy.
+        agg_cols = ", ".join(
+            f"SUM(CASE WHEN payers>={mp} AND vol>={mu * 1_000_000} THEN 1 ELSE 0 END), "
+            f"COALESCE(SUM(CASE WHEN payers>={mp} AND vol>={mu * 1_000_000} THEN vol ELSE 0 END), 0)"
+            for _, mp, mu in SELLER_INDEX_TIERS)
+        # EXECUTED WITH NO BOUND PARAMETERS, and the chain name is inlined —
+        # load-bearing, not style. psycopg only treats a literal '%' in the SQL
+        # as a format placeholder once params are passed, so binding (ch,)
+        # against the '%\_permit2' filter below raised on Postgres; the
+        # try/except around this function then shipped a blob with no
+        # seller_index at all, silently, for a full nightly (2026-08-10).
+        # SQLite ignores '%' entirely, so no test could have caught it. Every
+        # other permit2-filtered query in this file is parameterless for the
+        # same reason. `ch` is from the hardcoded _SELLER_INDEX_CHAINS tuple —
+        # never user input, same precedent as _witnessed_filter inlining ints
+        # from our own meta. If you ever add a parameter here, escape every
+        # literal '%' as '%%' first.
+        sql = (
+            r"SELECT " + agg_cols + " FROM (SELECT seller, "
+            # external payers only: a seller paying itself is not demand.
+            r"COUNT(DISTINCT CASE WHEN payer<>seller THEN payer END) payers, "
+            rf"{store.volume_agg()} vol FROM settlements "
+            rf"WHERE chain='{ch}' AND chain NOT LIKE '%\_permit2' ESCAPE '\'"
+            + wf +
+            r" GROUP BY seller) t")
+        row = store.db.execute(sql).fetchone()
+        tiers = []
+        for i, (label, mp, mu) in enumerate(SELLER_INDEX_TIERS):
+            sellers = int(row[2 * i] or 0)
+            vol = store._norm_vol(row[2 * i + 1])
+            tiers.append({
+                "tier": label, "min_payers": mp, "min_usd": mu,
+                "sellers": sellers, "volume_usd": round((vol or 0) / 1e6, 2),
+            })
+        tiers_by_chain[ch] = tiers
+    return {
+        "method": ("distinct external payers = payers excluding self-pay; "
+                   "lifetime USDC volume"),
+        "tiers": tiers_by_chain,
+    }
+
+
 def build_dashboard_metrics(store: Store) -> dict:
     """The DB-HEAVY half of the dashboard payload: per-chain scoped/superset
     aggregates + totals + coverage-start dates + db size + row count.
@@ -753,11 +836,24 @@ def build_dashboard_metrics(store: Store) -> dict:
         rows = store.db.execute("SELECT COUNT(*) FROM settlements").fetchone()[0]
     except Exception:
         rows = tot_set
-    return {"generated_at": datetime.now(timezone.utc).isoformat(),
-            "chains": chains, "since": since,
-            "totals": {"settlements": tot_set, "volume_usd": round(tot_vol, 2), "rows": rows},
-            "db_size": db_size,
-            "instr": build_instr_metrics(store)}
+    metrics = {"generated_at": datetime.now(timezone.utc).isoformat(),
+               "chains": chains, "since": since,
+               "totals": {"settlements": tot_set, "volume_usd": round(tot_vol, 2), "rows": rows},
+               "db_size": db_size,
+               "instr": build_instr_metrics(store)}
+    # Real Seller Index — isolated exactly like every other section folded into
+    # this blob (instr, merchant/clean tiers above): a bug or a slow/locked
+    # table here must never blank the rest of the dashboard payload.
+    try:
+        metrics["seller_index"] = build_seller_index(store)
+    except Exception as e:
+        print(f"[dashboard] seller_index precompute failed (non-fatal): {e}",
+              file=sys.stderr)
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
+    return metrics
 
 
 def vacuum_settlements(store: Store) -> None:

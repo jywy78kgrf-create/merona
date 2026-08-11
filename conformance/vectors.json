@@ -1,0 +1,156 @@
+{
+  "_comment": "x402-trust-query-v0.1 / x402-trust-evaluation-v0.1 conformance vectors for POST /v1/trust/evaluate. Assertions are SHAPE checks (decision enums, null-iff-null_reason, basis[] typing, reason_code) robust to a scoring dataset that changes daily — NEVER an exact score/decision, since a live index's grade for a given address can move night to night. Every 200 response is also checked against conformance/check.py's BASELINE_SHAPE_CHECKS (schema id, decision enum, basis[] entry typing, block-provenance on FAIL, evidence_uri sha256: prefix, expires_at == issued_at + ttl) regardless of what's listed under a vector's own 'assertions' — those are additional, targeted checks.",
+  "vectors": [
+    {
+      "name": "malformed_json_body",
+      "raw_body": "{not valid json",
+      "expect": {
+        "status": 400,
+        "assertions": {}
+      }
+    },
+    {
+      "name": "empty_body_is_well_formed",
+      "raw_body": "",
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code": "unknown_subject",
+          "null_reason": "unknown_subject",
+          "score_is_null": true
+        }
+      }
+    },
+    {
+      "name": "missing_wallet_is_unknown_subject",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"chain": "base"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code": "unknown_subject",
+          "null_reason": "unknown_subject",
+          "score_is_null": true,
+          "basis_empty": true
+        }
+      }
+    },
+    {
+      "name": "unsupported_chain",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "0xabababababababababababababababababababab", "chain": "ethereum"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code": "unsupported_chain",
+          "null_reason": "unsupported_chain",
+          "score_is_null": true
+        }
+      }
+    },
+    {
+      "name": "eip155_8453_alias_accepted_as_base",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "0xabababababababababababababababababababab", "chain": "eip155:8453"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code_not": "unsupported_chain",
+          "direction": "seller"
+        }
+      }
+    },
+    {
+      "name": "eip155_137_alias_accepted_as_polygon",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "0xabababababababababababababababababababab", "chain": "eip155:137"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code_not": "unsupported_chain",
+          "direction": "seller"
+        }
+      }
+    },
+    {
+      "name": "direction_buyer_is_payer_scoring_not_available",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "buyer",
+        "payer": {"agent_id": "agent_1", "wallet": "0xcccccccccccccccccccccccccccccccccccccccc"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code": "payer_scoring_not_available",
+          "null_reason": "insufficient_signal",
+          "score_is_null": true,
+          "direction": "buyer",
+          "basis_empty": true
+        }
+      }
+    },
+    {
+      "name": "base58_solana_wallet_shape_accepted",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "MASi45ub7Qe4ZE36UT5G6cU4ud8Fhhe4deS4F3cw9KTA", "chain": "solana"}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code_not": "unknown_subject",
+          "direction": "seller"
+        }
+      }
+    },
+    {
+      "name": "well_formed_base_query",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "0x1111111111111111111111111111111111111111", "chain": "base"},
+        "resource": {"url": "https://example.com/api/data", "method": "GET",
+                     "amount": {"value": "10000", "currency": "USDC", "chain": "base"}},
+        "requested_at": "2026-08-10T00:00:00Z"
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "direction": "seller",
+          "decision_in": ["PASS", "FAIL", "UNCERTAIN"]
+        }
+      }
+    },
+    {
+      "name": "well_formed_polygon_query_resource_amount_chain_fallback",
+      "request": {
+        "schema": "x402-trust-query-v0.1",
+        "direction": "seller",
+        "subject": {"wallet": "0x2222222222222222222222222222222222222222"},
+        "resource": {"amount": {"value": "5000", "currency": "USDC", "chain": "polygon"}}
+      },
+      "expect": {
+        "status": 200,
+        "assertions": {
+          "reason_code_not": "unsupported_chain",
+          "direction": "seller",
+          "decision_in": ["PASS", "FAIL", "UNCERTAIN"]
+        }
+      }
+    }
+  ]
+}

@@ -1,11 +1,21 @@
 """Wash / self-dealing filter — the "clean numbers" layer for the report.
 
 Artemis demonstrated (verified, see docs/report/strategy_research.md) that
-roughly half of observed x402 transactions are artificial, via two patterns:
+roughly half of observed x402 transactions are artificial, via three
+patterns:
   1. SELF-DEALING  — same wallet as payer and seller. Already captured per
      seller in every snapshot (self_pay_tx).
   2. WASH LOOPS    — the seller funds a buyer wallet, which immediately pays
      the money back as a "settlement".
+  3. SINGLE-PAYER CONCENTRATION — one-directional single-payer monoculture:
+     a seller with no self-pay, no reciprocal pair and no detected funded
+     loop, whose volume is nonetheless almost entirely ONE payer paying
+     itself-adjacently through a single counterparty, not a market. Caught
+     2026-08-09: one Base seller (BlockRun) was 38.8% of the *published
+     clean* Base volume while 99.58% of its own volume came from a single
+     payer — invisible to (1) and (2) because nothing loops back and no
+     wallet pays itself. scores.py v4.2 already caps grades on top-payer TX
+     share; this module adds the matching exclusion for clean VOLUME.
 
 This module computes, nightly and best-effort:
   a. RECIPROCAL settlement pairs — (chain, A, B) where A pays B AND B pays A
@@ -16,9 +26,17 @@ This module computes, nightly and best-effort:
      seller's payer set. funded_payer_ratio ~ how much of their "demand" the
      seller manufactured. SAMPLED coverage (top N sellers, EVM chains only) —
      the cap is logged, never hidden.
-  c. CLEAN METRICS — per chain: settlements/volume excluding flagged sellers
+  c. CONCENTRATION scan — per seller (ALL scoped sellers, not sampled): top
+     single-payer VOLUME share. Flags sellers whose top payer supplies
+     >= CONC_SHARE of their volume, above minimum tx/volume floors (so a
+     brand-new or tiny seller with one early customer isn't flagged). A
+     GENERIC pattern detector, not a curated address list.
+  d. CLEAN METRICS — per chain: settlements/volume excluding flagged sellers
      (self_pay_ratio > SELF_THRESH, or funded_payer_ratio > FUNDED_THRESH, or
-     reciprocal-pair participant). These are the publishable clean numbers.
+     reciprocal-pair participant, or cycle-flagged, or batch-flagged), MINUS
+     a separate, named concentration-excluded bucket ((c) above, sellers not
+     already counted in the first bucket). These are the publishable clean
+     numbers.
 
 Classification is PER SELLER (Artemis-style), thresholds documented below and
 stored with every row. Observe-only; writes only wash_signals/clean_metrics.
@@ -44,6 +62,14 @@ TOP_SELLERS = int(os.environ.get("WASH_TOP_SELLERS", "150"))
 SELF_THRESH = float(os.environ.get("WASH_SELF_THRESH", "0.20"))
 FUNDED_THRESH = float(os.environ.get("WASH_FUNDED_THRESH", "0.20"))
 RPC_TIMEOUT = float(os.environ.get("WASH_RPC_TIMEOUT", "20"))
+# Single-payer concentration thresholds (pattern 3 above). All three must
+# hold before a seller is flagged: a high top-payer share ALONE would catch
+# every honest seller's first week (one customer = 100% share); the tx/volume
+# floors exist so a seller only gets judged once it has enough history for
+# "one payer" to mean something.
+CONC_SHARE = float(os.environ.get("X402_WASH_CONC_SHARE", "0.95"))
+CONC_MIN_TX = int(os.environ.get("X402_WASH_CONC_MIN_TX", "200"))
+CONC_MIN_VOL = float(os.environ.get("X402_WASH_CONC_MIN_VOL", "500.0"))   # USD
 WASH_CHAINS = ("base", "polygon")   # EVM lookback; Solana funding graph = v2
 _REGISTRY = Path(__file__).resolve().parent.parent / "data" / "indexer" / "relayer_registry.json"
 # merona's own payTo wallet(s): excluded from clean metrics as sellers exactly
@@ -182,6 +208,71 @@ def _reciprocal_sellers(store) -> dict:
     out: dict = {}
     for ch, seller, payer in rows:
         out.setdefault(ch, set()).update((seller, payer))
+    return out
+
+
+def _concentration_scan(store, date: str) -> dict:
+    """Per-seller TOP-PAYER VOLUME share, over the SAME scope as the clean
+    loop (registry-relayer facilitator, witnessed floor, merchants only).
+    Catches one-directional single-payer monoculture — a seller with zero
+    self-pay, no reciprocal pair, and no funded-loop hit, but whose volume is
+    almost entirely one payer — which (a)/(b)/cycles are structurally blind
+    to: nothing loops back and no wallet pays itself, so there is no pair or
+    cycle edge to find (BlockRun on Base, caught 2026-08-09: 38.8% of
+    published clean volume, 99.58% from one payer).
+
+    ONE SQL statement per chain, not a per-seller Python loop: a per-seller
+    totals subquery joined to a per-(seller,payer) max-volume subquery, group
+    by seller. Same shape as the reciprocal self-join, scales the same way,
+    and runs under the same lifted 10-min statement timeout (run_wash sets it
+    before calling this).
+
+    Returns {chain: {ALL concentration-matched sellers}} — every match gets a
+    wash_signals evidence row here, but the clean loop decides what actually
+    subtracts (matches not already in the wash bucket) and words the coverage
+    note from ITS counts, so note and exclusion can never drift apart."""
+    out: dict = {ch: set() for ch in WASH_CHAINS}
+    for ch in WASH_CHAINS:
+        rel = _scoped_relayers(ch)
+        if not rel:
+            continue
+        rph = ",".join(["?"] * len(rel))
+        wb = _witnessed_floor(store, ch)
+        exs = _excluded_sellers(rel)
+        xph = ",".join(["?"] * len(exs))
+        scope = (f"chain=? AND facilitator IN ({rph}) AND block_number >= ? "
+                 f"AND seller NOT IN ({xph})")
+        sargs = (ch, *rel, wb, *exs)
+        rows = store.db.execute(store.q(
+            f"SELECT s.seller, s.tx_count, s.volume, mp.max_payer_vol FROM "
+            f"(SELECT seller, COUNT(*) tx_count, COALESCE(SUM(amount),0) volume "
+            f" FROM settlements WHERE {scope} GROUP BY seller) s "
+            f"JOIN (SELECT seller, MAX(payer_vol) max_payer_vol FROM "
+            f" (SELECT seller, payer, SUM(amount) payer_vol FROM settlements "
+            f"  WHERE {scope} AND payer <> seller GROUP BY seller, payer) pp "
+            f" GROUP BY seller) mp ON mp.seller = s.seller "
+            f"WHERE s.tx_count >= ? AND s.volume >= ? "
+            f"AND mp.max_payer_vol >= ? * s.volume"),
+            (*sargs, *sargs, CONC_MIN_TX, CONC_MIN_VOL * 1e6, CONC_SHARE)
+        ).fetchall()
+        for seller, cnt, vol, max_pv in rows:
+            # normalize BEFORE any arithmetic: on Postgres SUM(amount) comes
+            # back as Decimal, and Decimal / float raises TypeError — SQLite
+            # tests can't catch that, so the norm here is load-bearing
+            vol = store._norm_vol(vol)
+            max_pv = store._norm_vol(max_pv)
+            pshare = (max_pv / vol) if vol else 0.0
+            out[ch].add(seller)
+            store.record_wash_signal(date, ch, seller, {
+                "tx_count": int(cnt),
+                "top_payer_vol_share": round(pshare, 4),
+                "volume_usd": round(vol / 1e6, 2),
+                "concentration": True,
+                "flagged": True,
+                "thresholds": {"conc_share": CONC_SHARE,
+                               "conc_min_tx": CONC_MIN_TX,
+                               "conc_min_vol_usd": CONC_MIN_VOL}}, _utcnow())
+    store.db.commit()
     return out
 
 
@@ -352,6 +443,27 @@ def run_wash(store, date: str) -> None:
             time.sleep(0.15)
         store.db.commit()
 
+    # WASH pattern 3 — single-payer concentration (see module docstring).
+    # ALL scoped sellers, not sampled to TOP_SELLERS: unlike the funded-payer
+    # lookback this is pure SQL over our own settlements table, no RPC, so
+    # there is no coverage cap to apply.
+    conc_ok = True
+    try:
+        concentration = _concentration_scan(store, date)
+        n_conc = sum(len(v) for v in concentration.values())
+        print(f"[wash] single-payer concentration: {n_conc} seller(s) flagged")
+    except Exception as e:
+        concentration = {}
+        conc_ok = False   # recorded in the clean coverage_note: "scan
+        # unavailable", NOT "scanned clean" (same 2026-08-01 lesson as
+        # recip_ok — an exception here must not silently imply a clean pass)
+        print(f"[wash] concentration scan failed (continuing): "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
+
     # clean metrics: exclude flagged sellers' settlements + ALL self-pay rows.
     # WITNESSED regime only — the nightly clean series measures what we watch
     # live; historical clean numbers come from the one-time report batch pass.
@@ -383,18 +495,51 @@ def run_wash(store, date: str) -> None:
                     (*sargs, *excl)).fetchone()
             else:
                 ex_n, ex_v = 0, 0
+            # CONCENTRATION — a separate, named exclusion class (pattern 3).
+            # Only sellers NOT already in the wash bucket count here, or a
+            # seller flagged by both cycles/self-pay/etc AND concentration
+            # would have its settlements subtracted twice.
+            conc_only = [s for s in concentration.get(ch, set()) if s not in flagged[ch]] \
+                if conc_ok else []
+            if conc_only:
+                cph = ",".join(["?"] * len(conc_only))
+                cx_n, cx_v = store.db.execute(store.q(
+                    f"SELECT COUNT(*), COALESCE(SUM(amount),0) FROM settlements "
+                    f"WHERE {scope} AND seller IN ({cph})"),
+                    (*sargs, *conc_only)).fetchone()
+            else:
+                cx_n, cx_v = 0, 0
+            # self-pay must skip BOTH exclusion buckets, or a self-pay row
+            # belonging to an already-excluded seller (wash OR concentration)
+            # gets subtracted a second time — that seller's rows are already
+            # fully removed by the ex_n/cx_n queries above.
+            already = excl + conc_only
             sp_n, sp_v = store.db.execute(store.q(
                 f"SELECT COUNT(*), COALESCE(SUM(amount),0) FROM settlements "
                 f"WHERE {scope} AND payer=seller "
-                + (f"AND seller NOT IN ({ph})" if excl else "")),
-                (*sargs, *excl) if excl else sargs).fetchone()
-            clean_n = int(total) - int(ex_n) - int(sp_n)
-            clean_v = int(vol) - int(ex_v) - int(sp_v)
+                + (f"AND seller NOT IN ({','.join(['?'] * len(already))})" if already else "")),
+                (*sargs, *already) if already else sargs).fetchone()
+            clean_n = int(total) - int(ex_n) - int(cx_n) - int(sp_n)
+            clean_v = int(vol) - int(ex_v) - int(cx_v) - int(sp_v)
+            # The concentration decomposition is persisted in coverage_note
+            # (with the actual amounts) + per-seller wash_signals rows —
+            # clean_metrics has a fixed column set and no migration machinery,
+            # so new columns would mean a hand-run prod ALTER; the note IS the
+            # audit channel this table already uses for exactly this.
+            if conc_ok:
+                conc_frag = (f"; single-payer concentration excluded "
+                             f"(top-payer vol share >= {CONC_SHARE:.0%}, "
+                             f"min {CONC_MIN_TX} tx, min ${CONC_MIN_VOL:g}): "
+                             f"{len(conc_only)} sellers, {int(cx_n):,} "
+                             f"settlements, ${int(cx_v)/1e6:,.2f}")
+            else:
+                conc_frag = ("; single-payer concentration scan unavailable "
+                             "(see stderr)")
             store.record_clean_metrics(date, ch, {
                 "scoped_settlements": int(total),
                 "scoped_volume_usd": round(int(vol) / 1e6, 2),
                 "flagged_sellers": len(excl),
-                "excluded_settlements": int(ex_n) + int(sp_n),
+                "excluded_settlements": int(ex_n) + int(cx_n) + int(sp_n),
                 "clean_settlements": clean_n,
                 "clean_volume_usd": round(clean_v / 1e6, 2),
                 "coverage_note": f"x402-scoped (facilitator in registry, "
@@ -405,11 +550,13 @@ def run_wash(store, date: str) -> None:
                                  f"excluded as seller (self-dealing guard)"
                                  + (f"; batch flags sha {batch_sha[ch]}"
                                     if ch in batch_sha else "")
-                                 + cycle_note.get(ch, "")},
+                                 + cycle_note.get(ch, "")
+                                 + conc_frag},
                 _utcnow())
             print(f"[wash] {ch} clean: {clean_n:,} settlements / "
-                  f"${clean_v/1e6:,.2f} (excluded {int(ex_n)+int(sp_n):,} from "
-                  f"{len(excl)} flagged sellers + self-pay)")
+                  f"${clean_v/1e6:,.2f} (excluded {int(ex_n)+int(cx_n)+int(sp_n):,} "
+                  f"from {len(excl)} wash-flagged + {len(conc_only)} "
+                  f"concentration-flagged sellers + self-pay)")
         except Exception as e:
             print(f"[wash] clean metrics {ch} failed: {e}", file=sys.stderr)
 

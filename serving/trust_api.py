@@ -38,6 +38,7 @@ Run on the box (reuses the venv + /etc/x402-index.env):
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -45,7 +46,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -53,6 +54,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "indexer"))
 from storage import open_store                      # noqa: E402
+import jcs                                           # noqa: E402 (serving/jcs.py)
 
 PORT = int(os.environ.get("TRUST_API_PORT", "8402"))
 RPM = float(os.environ.get("TRUST_API_RPM", "60"))
@@ -174,6 +176,133 @@ MAX_PATH_LOG = 120        # cap the logged path length (usage-file abuse, LB-6)
 import x402pay  # noqa: E402
 PUBLIC_BASE = os.environ.get("TRUST_API_PUBLIC_URL",
                              "https://api.merona.io").rstrip("/")
+
+# --- signed card envelope (x402 draft-02 / twzrd) --------------------------
+# Ed25519 signing over the JCS canonical bytes of a /v1/trust/evaluate body,
+# so a verifier with only the response + this API's public key can confirm
+# the decision wasn't altered in transit or by a relaying intermediary.
+# Env-gated and loaded ONCE at import: X402_TRUST_SIGNING_KEY names a file
+# holding the RAW 32-byte Ed25519 private key (the seed, NOT a PEM — see
+# serving/README.md for the keygen one-liner and why raw-bytes was chosen
+# over PEM here). Missing/unset/unreadable/wrong-length -> signing stays
+# disabled: responses are byte-for-byte what they were before this feature,
+# just without an "envelope" key. A single stderr warning fires here, at
+# import, never per-request — the request path must not know or care why
+# signing is off.
+#
+# WHY module-level globals rather than a class: the handler is instantiated
+# per-request (BaseHTTPRequestHandler) and every request would otherwise
+# reload/reparse the key file for nothing — signing state is process-wide
+# and immutable after import, so it belongs at module scope like KEYS above.
+# Tests monkeypatch these three names directly (no key file, no I/O) — see
+# indexer/tests/test_trust_envelope.py.
+# GUARDED import: `cryptography` is only needed when signing is enabled.
+# An environment without it (or with a broken cffi backend — observed
+# 2026-08-11 after a container rebuild) must degrade to the same "signing
+# disabled, responses omit `envelope`" posture as a missing key file — a
+# trust API that crashes at import because an OPTIONAL feature's dependency
+# is absent would take down every unsigned deployment for nothing.
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey)
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, PublicFormat)
+except Exception:                                                  # noqa: E402
+    Ed25519PrivateKey = None
+
+
+def _load_signing_key():
+    """(Ed25519PrivateKey | None, raw public key bytes | None, kid | None).
+    NEVER generates a key implicitly — an operator who wants signing must
+    mint one themselves (serving/README.md) and point the env var at it."""
+    path = os.environ.get("X402_TRUST_SIGNING_KEY")
+    if not path:
+        return None, None, None
+    if Ed25519PrivateKey is None:
+        print("[trust-api] WARNING: X402_TRUST_SIGNING_KEY is set but the "
+              "`cryptography` package is unavailable — envelope signing "
+              "DISABLED; /v1/trust/evaluate responses will omit `envelope`",
+              file=sys.stderr, flush=True)
+        return None, None, None
+    try:
+        raw = Path(path).read_bytes()
+        if len(raw) != 32:
+            raise ValueError(f"expected 32 raw bytes, got {len(raw)}")
+        priv = Ed25519PrivateKey.from_private_bytes(raw)
+    except Exception as e:
+        print(f"[trust-api] WARNING: cannot load X402_TRUST_SIGNING_KEY "
+              f"{path!r} ({type(e).__name__}: {e}) — envelope signing "
+              f"DISABLED; /v1/trust/evaluate responses will omit `envelope`",
+              file=sys.stderr, flush=True)
+        return None, None, None
+    pub_raw = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    # kid: first 12 hex chars of sha256(raw public key) — short, stable,
+    # collision-safe enough for the one-or-two keys a single deployment
+    # rotates through, and cheap to eyeball-match against jwks.json.
+    kid = hashlib.sha256(pub_raw).hexdigest()[:12]
+    return priv, pub_raw, kid
+
+
+_SIGNING_KEY, _SIGNING_PUB, _SIGNING_KID = _load_signing_key()
+
+
+def _b64url_nopad(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _jwks() -> dict:
+    """GET /.well-known/jwks.json body. Empty `keys` (never an error) when
+    signing is disabled — the same "absent, not broken" posture the rest of
+    this module uses for missing evidence."""
+    if _SIGNING_PUB is None:
+        return {"keys": []}
+    return {"keys": [{
+        "kty": "OKP", "crv": "Ed25519", "kid": _SIGNING_KID,
+        "x": _b64url_nopad(_SIGNING_PUB), "use": "sig",
+    }]}
+
+
+def _build_envelope(payload: dict) -> dict | None:
+    """The signed-card `envelope` block for one /v1/trust/evaluate response
+    body, or None when signing is disabled (caller must then omit the key
+    entirely — never emit a null/empty envelope).
+
+    Verification recipe (what a verifier does with `payload` + this
+    envelope + the public key from `public_key_url`):
+      1. Take the FULL response body and delete the top-level `envelope`
+         key — the signature covers the card WITHOUT its own envelope,
+         since the envelope (in particular `signature` itself) cannot sign
+         over its own bytes.
+      2. Re-canonicalise the remaining object with the SAME algorithm named
+         in `envelope.canonicalisation`
+         (urn:x402:canonicalisation:jcs-rfc8785-v1 -> serving/jcs.py here).
+      3. Recompute sha256 of those canonical bytes and confirm it equals
+         `card_ref` with the "sha256:" prefix stripped — this also proves
+         `card_ref` itself wasn't tampered with independently of the
+         signature.
+      4. Base64url-decode `signature` (no padding) and Ed25519-verify it
+         against the SAME canonical bytes from step 2, using the public key
+         named by `kid` in the JWKS document at `public_key_url`.
+    Steps 3 and 4 both operate on the canonical bytes computed in step 2 —
+    a verifier that only checks one of them accepts a tampered card_ref
+    with a still-valid-looking signature over different bytes, or vice
+    versa; conformance/check.py's pure-Python verifier performs both.
+    """
+    if _SIGNING_KEY is None:
+        return None
+    canonical = jcs.canonicalize_bytes(payload)
+    card_ref = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    signature = _SIGNING_KEY.sign(canonical)
+    return {
+        "canonicalisation": "urn:x402:canonicalisation:jcs-rfc8785-v1",
+        "alg": "Ed25519",
+        "kid": _SIGNING_KID,
+        "card_ref": card_ref,
+        "signature": _b64url_nopad(signature),
+        "public_key_url": PUBLIC_BASE + "/.well-known/jwks.json",
+    }
+
+
 PAY_DESC = "merona m.Score lookup — wash-aware x402 trust data"
 # per-seller delivery evidence is priced separately (deeper than a score
 # lookup: latest state + full paid-probe history) — double PRICE_USD by
@@ -733,6 +862,105 @@ EVAL_DISCLAIMER = (
     "anchored snapshot referenced in evidence_uri; it is not an accusation "
     "or an endorsement of either party.")
 
+# --- basis[] evidence typing (twzrd draft-02 of x402#2299) ---------------------
+# draft-02 replaced a bare list of strings with typed entries carrying a
+# required evidence CLASS, plus a "block-provenance" rule: a FAIL decision
+# must rest on curated or behavioral evidence (never attested/community
+# alone — those two are either unverified-by-us or informational-only in
+# this implementation). Every basis[] entry built below has this shape.
+_EVAL_EVIDENCE_CLASSES = ("curated", "behavioral", "community", "attested")
+# One-line meaning of each class, reused by both the wire helper below and
+# the provider descriptor / spec dicts near the bottom of this section — kept
+# in one place so the docs can't drift from what the code actually emits.
+_EVAL_EVIDENCE_CLASS_NOTES = {
+    "curated": "operator-verified fact — merona itself paid the seller's "
+               "endpoint and recorded the outcome (settlement tx + HTTP "
+               "status). Permitted to support a FAIL.",
+    "behavioral": "derived from merona's own seller_scores history (the "
+                  "nightly wash-aware grade). Permitted to support a FAIL.",
+    "community": "third-party reported evidence — reserved for draft-02 "
+                 "compatibility; merona does not currently emit this class.",
+    "attested": "on-chain anchored via EAS on Base; evidence_uri's sha256: "
+               "content-addresses the exact nightly snapshot, so the same "
+               "evidence is independently re-derivable, not merely "
+               "asserted. Never emitted alone as a FAIL's only support.",
+}
+
+
+def _eval_basis(evidence_class: str, kind: str, ref=None, observed_at=None) -> dict:
+    """One typed basis[] entry. `evidence_class` is asserted against the
+    fixed draft-02 vocabulary rather than trusted blindly — a typo here
+    would silently violate the block-provenance rule downstream."""
+    assert evidence_class in _EVAL_EVIDENCE_CLASSES, evidence_class
+    return {"class": evidence_class, "kind": kind, "ref": ref,
+            "observed_at": observed_at}
+
+
+def _eval_attested_entry(ev: dict, evidence_uri) -> dict | None:
+    """attested `eas_anchor` entry, appended only when _eval_base_evidence
+    found an on-chain anchor for this snapshot (ev["anchors"] non-empty).
+    WHY a separate class at all: the EAS attestation on Base makes the same
+    snapshot independently re-derivable — attested AND recomputable, which
+    is merona's differentiator over a provider that only asserts facts."""
+    if not ev.get("anchors"):
+        return None
+    return _eval_basis("attested", "eas_anchor", evidence_uri,
+                       ev.get("snapshot_date"))
+
+
+def _eval_curated_probe_entry(delivery: dict, record: dict,
+                              chain: str | None) -> dict:
+    """curated `first_party_probe` entry shared by the charged_unserved and
+    delivery_verified paths: merona itself paid and watched the endpoint, so
+    this is an operator-verified fact (draft-02 "curated"), not a derived
+    score — the class the block-provenance rule permits a FAIL to rest on.
+    `chain` is threaded in from the caller's already-validated query chain
+    rather than trusted from `record` alone: trust_lookup's 404 "unknown
+    seller" shape (see _evaluate_seller_record's docstring) can carry a
+    `delivery` block with no top-level `chain` field at all."""
+    settlement_tx = delivery.get("settlement_tx")
+    probe_chain = chain or record.get("chain") or "unknown"
+    ref = f"{probe_chain}:tx:{settlement_tx}" if settlement_tx else None
+    # trust_lookup's delivery dicts key the probe date as "as_of" (see
+    # _delivery_states/_delivery_history_states above) — not checked_at/date.
+    return _eval_basis("curated", "first_party_probe", ref,
+                       delivery.get("as_of"))
+
+
+# score:null must always carry a reason (draft-02: never fabricate a
+# number). Most null-score paths map 1:1 onto a reason_code; anything else
+# that reaches _eval_result with score=None collapses to the generic
+# "insufficient_signal" — still honest, just less specific.
+_EVAL_NULL_REASON = {
+    "unknown_subject": "unknown_subject",
+    "unsupported_chain": "unsupported_chain",
+    "insufficient_evidence": "insufficient_signal",
+    "payer_scoring_not_available": "insufficient_signal",
+}
+
+# Every reason_code this module actually emits (grep-checked against the
+# _eval_result() call sites above), one-line meaning each — the source for
+# both TRUST_API_SPEC's reason_codes and anyone reading this file top to
+# bottom trying to enumerate the decision tree without re-deriving it.
+_EVAL_REASON_CODE_NOTES = {
+    "charged_unserved": "a paid probe settled on-chain but the request was "
+                        "then refused — FAIL",
+    "grade_decline": "suggested_action is DECLINE, or a bare F grade with "
+                     "no DECLINE reached — FAIL",
+    "delivery_verified": "a paid probe both settled and returned real "
+                         "content, and grade is A/B — PASS",
+    "grade_pass": "grade A/B with no delivery probe on file — PASS",
+    "grade_marginal": "grade C/D — UNCERTAIN",
+    "insufficient_evidence": "no grade and no delivery record for this "
+                             "wallet — UNCERTAIN, score null",
+    "unknown_subject": "no wallet given, or it doesn't parse as an address "
+                       "on the resolved chain — UNCERTAIN, score null",
+    "unsupported_chain": "chain isn't base/polygon/solana (or its eip155 "
+                         "alias) — UNCERTAIN, score null",
+    "payer_scoring_not_available": "direction=buyer — merona doesn't score "
+                                   "payers yet — UNCERTAIN, score null",
+}
+
 
 def _eval_score(raw_score, grade) -> float | None:
     """Normalize whatever numeric score trust_lookup returned to 0-1 (the
@@ -755,20 +983,40 @@ def _eval_chain(raw) -> str | None:
 
 def _eval_result(direction: str, decision: str, score, reason_code: str,
                  basis: list, evidence_uri, evidence: dict, ttl: int) -> dict:
-    return {
+    if decision == "FAIL":
+        # Structural guard for draft-02's block-provenance rule: a FAIL must
+        # rest on curated or behavioral evidence. Every call site above this
+        # function already satisfies it, so tripping this means a future
+        # FAIL path was added without matching evidence — a bug in this
+        # module, not bad caller input (hence assert, not a 4xx).
+        assert any(b.get("class") in ("curated", "behavioral")
+                  for b in basis), f"FAIL with no curated/behavioral basis: {basis!r}"
+    # One `now` for both timestamps so expires_at - issued_at == ttl exactly,
+    # rather than drifting by however long the two calls straddle.
+    now = datetime.now(timezone.utc)
+    resp = {
         "schema": "x402-trust-evaluation-v0.1",
         "decision": decision,
         "score": score,
+    }
+    if score is None:
+        # Present iff score is null (never fabricate a number, but also
+        # never leave a null score unexplained) — absent entirely otherwise.
+        resp["null_reason"] = _EVAL_NULL_REASON.get(reason_code,
+                                                     "insufficient_signal")
+    resp.update({
         "reason_code": reason_code,
         "direction": direction,
         "basis": basis,
         "evidence_uri": evidence_uri,
         "evidence": evidence,
         "ttl": ttl,
-        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
         "provider": "merona",
         "disclaimer": EVAL_DISCLAIMER,
-    }
+    })
+    return resp
 
 
 def _eval_base_evidence(record: dict) -> tuple[dict, str | None]:
@@ -785,7 +1033,8 @@ def _eval_base_evidence(record: dict) -> tuple[dict, str | None]:
     return ev, (f"sha256:{sha}" if sha else None)
 
 
-def _eval_charged_unserved(delivery: dict, record: dict) -> dict:
+def _eval_charged_unserved(delivery: dict, record: dict,
+                           chain: str | None) -> dict:
     ev, uri = _eval_base_evidence(record)
     if delivery.get("settlement_tx"):
         ev["settlement_tx"] = delivery["settlement_tx"]
@@ -793,11 +1042,19 @@ def _eval_charged_unserved(delivery: dict, record: dict) -> dict:
         ev["http_status"] = delivery["http_status"]
     grade = record.get("grade")
     score = _eval_score(record.get("score"), grade) if grade else None
+    # curated: a first-party paid-probe receipt is an operator-verified fact
+    # — the class draft-02's block-provenance rule permits this FAIL to
+    # rest on. `attested` rides along too when the same snapshot is anchored.
+    basis = [_eval_curated_probe_entry(delivery, record, chain)]
+    attested = _eval_attested_entry(ev, uri)
+    if attested:
+        basis.append(attested)
     return _eval_result("seller", "FAIL", score, "charged_unserved",
-                        ["first_party_probe"], uri, ev, EVAL_CHARGED_TTL)
+                        basis, uri, ev, EVAL_CHARGED_TTL)
 
 
-def _evaluate_seller_record(status: int, record: dict) -> dict:
+def _evaluate_seller_record(status: int, record: dict,
+                            chain: str | None = None) -> dict:
     """Pure: maps an already-fetched trust_lookup() result (its 200 body, or
     its 404 error body — both may carry `delivery`) to the
     x402-trust-evaluation-v0.1 wire shape. No I/O of its own — the DB call
@@ -809,12 +1066,18 @@ def _evaluate_seller_record(status: int, record: dict) -> dict:
       3. delivery_verified + grade A/B
       4. grade alone (A/B pass, C/D marginal, bare F -> decline)
       5. no grade at all -> insufficient_evidence
+
+    `chain` is the caller's already-validated query chain (threaded down
+    from _trust_evaluate); it feeds the curated basis entry's chain-prefixed
+    tx ref and is preferred over record.get("chain") because the 404
+    "unknown seller" shape trust_lookup returns has no top-level `chain`
+    field at all (see the test fixture below that exercises exactly this).
     """
     record = record or {}
     delivery = record.get("delivery") or {}
 
     if delivery.get("status") == "charged_unserved":
-        return _eval_charged_unserved(delivery, record)
+        return _eval_charged_unserved(delivery, record, chain)
 
     if status != 200:
         # unknown wallet (404, no charged_unserved receipt) or a backend
@@ -826,29 +1089,41 @@ def _evaluate_seller_record(status: int, record: dict) -> dict:
     grade = str(record.get("grade") or "").upper() or None
     suggested = record.get("suggested_action") or {}
     ev, uri = _eval_base_evidence(record)
+    attested = _eval_attested_entry(ev, uri)
+
+    def _behavioral_basis() -> list:
+        # behavioral: derived from merona's own seller_scores history —
+        # also permitted to support a FAIL. attested rides along whenever
+        # the same snapshot has an on-chain anchor.
+        basis = [_eval_basis("behavioral", "seller_score", uri,
+                             ev.get("snapshot_date"))]
+        if attested:
+            basis.append(attested)
+        return basis
 
     if suggested.get("action") == "DECLINE":
         score = _eval_score(record.get("score"), grade)
         return _eval_result("seller", "FAIL", score, "grade_decline",
-                            ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+                            _behavioral_basis(), uri, ev, EVAL_DEFAULT_TTL)
 
     if delivery.get("status") == "delivery_verified" and grade in ("A", "B"):
         score = _eval_score(record.get("score"), grade)
+        basis = [_eval_curated_probe_entry(delivery, record, chain)] \
+            + _behavioral_basis()
         return _eval_result("seller", "PASS", score, "delivery_verified",
-                            ["first_party_probe", "behavioral"], uri, ev,
-                            EVAL_DEFAULT_TTL)
+                            basis, uri, ev, EVAL_DEFAULT_TTL)
 
     if grade:
         score = _eval_score(record.get("score"), grade)
         if grade in ("A", "B"):
             return _eval_result("seller", "PASS", score, "grade_pass",
-                                ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+                                _behavioral_basis(), uri, ev, EVAL_DEFAULT_TTL)
         if grade in ("C", "D"):
             return _eval_result("seller", "UNCERTAIN", score, "grade_marginal",
-                                ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+                                _behavioral_basis(), uri, ev, EVAL_DEFAULT_TTL)
         # bare F with no DECLINE action (e.g. still provisional) — still FAIL
         return _eval_result("seller", "FAIL", score, "grade_decline",
-                            ["behavioral"], uri, ev, EVAL_DEFAULT_TTL)
+                            _behavioral_basis(), uri, ev, EVAL_DEFAULT_TTL)
 
     # no grade, no delivery record: unknown/unrated wallet
     return _eval_result("seller", "UNCERTAIN", None, "insufficient_evidence",
@@ -856,6 +1131,22 @@ def _evaluate_seller_record(status: int, record: dict) -> dict:
 
 
 def _trust_evaluate(body: bytes, lookup=None) -> tuple[int, dict]:
+    """POST /v1/trust/evaluate wire entry point: computes the decision body
+    (_trust_evaluate_body, unchanged logic) and, on a 200, attaches the
+    signed `envelope` block when signing is enabled (_build_envelope
+    returns None when it's not — see its docstring for the verification
+    recipe). Split out so every 200 return path gets the envelope exactly
+    once, in one place, instead of each branch below remembering to add it.
+    """
+    code, obj = _trust_evaluate_body(body, lookup)
+    if code == 200:
+        envelope = _build_envelope(obj)
+        if envelope is not None:
+            obj["envelope"] = envelope
+    return code, obj
+
+
+def _trust_evaluate_body(body: bytes, lookup=None) -> tuple[int, dict]:
     """POST /v1/trust/evaluate. Free (no x402 payment lane — that only
     exists in do_GET's payable-prefix branch, which this never touches) and
     HTTP 200 for every well-formed query; the decision lives in the body.
@@ -911,7 +1202,229 @@ def _trust_evaluate(body: bytes, lookup=None) -> tuple[int, dict]:
                                  EVAL_DEFAULT_TTL)
 
     status, record = lookup(chain, addr)
-    return 200, _evaluate_seller_record(status, record)
+    return 200, _evaluate_seller_record(status, record, chain)
+
+
+# --- GET /.well-known/x402-trust-provider ---------------------------------------
+# Machine-readable provider descriptor for the x402 trust-provider extension
+# (x402#2299, twzrd draft-02) — lets an agent discover the endpoint, evidence
+# vocabulary, and decision set without reading prose docs. A plain
+# module-level dict, same as GLAMA_WELL_KNOWN/MCP_MANIFEST below: PUBLIC_BASE
+# is itself resolved once at import time from an env var, so there is nothing
+# to recompute per request.
+TRUST_PROVIDER_DESCRIPTOR = {
+    "provider": "merona",
+    "description": "wash-aware x402 trust provider — verifies what actually "
+                   "settles, from recomputable, on-chain anchored evidence.",
+    "endpoint": {
+        "method": "POST",
+        "url": PUBLIC_BASE + "/v1/trust/evaluate",
+        "request_schema": "x402-trust-query-v0.1",
+        "response_schema": "x402-trust-evaluation-v0.1",
+    },
+    "directions": [
+        {"direction": "seller",
+         "note": "fully supported: PASS/FAIL/UNCERTAIN from paid-probe and "
+                 "seller-score evidence"},
+        {"direction": "buyer",
+         "note": "always UNCERTAIN — payer scoring is not yet exposed as a "
+                 "gate (reason_code payer_scoring_not_available)"},
+    ],
+    "evidence_classes": dict(_EVAL_EVIDENCE_CLASS_NOTES),
+    "decisions": ["PASS", "FAIL", "UNCERTAIN"],
+    "score": "0-1, or null with a null_reason — never a fabricated number",
+    "freshness": "ttl (seconds), issued_at, and expires_at (= issued_at + "
+                "ttl) are all ISO-8601 UTC; treat a stale expires_at as "
+                "grounds to re-evaluate, not to trust the cached decision",
+    "spec_url": PUBLIC_BASE + "/v1/spec",
+    "docs": PUBLIC_BASE + "/#evaluate",
+    "pricing": "free, rate-limited",
+    "chains": ["base", "polygon", "solana"],
+    # Signed-card envelope (twzrd draft-02 / x402#2299): the canonicalisation
+    # PIN is fixed regardless of whether THIS deployment currently signs —
+    # an unsigned deployment simply omits `envelope` from every response
+    # body rather than advertising a pin it doesn't use.
+    "envelope": {
+        "canonicalisation": "urn:x402:canonicalisation:jcs-rfc8785-v1",
+        "alg": "Ed25519",
+        "jwks_url": PUBLIC_BASE + "/.well-known/jwks.json",
+        "note": ("present on every /v1/trust/evaluate response body iff "
+                 "this deployment has X402_TRUST_SIGNING_KEY configured; "
+                 "an unsigned deployment omits the `envelope` field "
+                 "entirely rather than sending an empty/null one — check "
+                 "for the key's absence, not a falsy value"),
+    },
+}
+
+# --- GET /v1/spec -----------------------------------------------------------------
+# Hand-written field-level schema for both wire objects (not derived from the
+# code, so it can't silently drift out of sync unnoticed — test_trust_evaluate
+# pins the evidence-class list against this dict so at least that much stays
+# honest). One-line description + type + required-ness + enum per field.
+TRUST_API_SPEC = {
+    "request": {
+        "schema": {"type": "string", "required": True,
+                  "enum": ["x402-trust-query-v0.1"],
+                  "description": "wire schema identifier for the query"},
+        "direction": {"type": "string", "required": False,
+                     "enum": ["seller", "buyer"],
+                     "description": "which side of the trade to evaluate; "
+                                    "defaults to seller when absent"},
+        "subject.wallet": {"type": "string", "required": True,
+                           "description": "address being evaluated — hex "
+                                          "(0x…) or base58, per chain"},
+        "subject.chain": {"type": "string", "required": False,
+                          "enum": ["base", "polygon", "solana"],
+                          "description": "chain the wallet lives on; "
+                                         "eip155:8453/eip155:137 CAIP-2 ids "
+                                         "are also accepted and mapped to "
+                                         "base/polygon; falls back to "
+                                         "resource.amount.chain if absent"},
+        "resource.url": {"type": "string", "required": False,
+                         "description": "resource URL the caller is about "
+                                        "to pay for (informational — chain "
+                                        "+ wallet alone identify the "
+                                        "subject)"},
+        "resource.method": {"type": "string", "required": False,
+                            "description": "HTTP method of the pending "
+                                           "request (informational)"},
+        "resource.amount.value": {"type": "string", "required": False,
+                                  "description": "amount about to be paid "
+                                                 "(informational)"},
+        "resource.amount.currency": {"type": "string", "required": False,
+                                     "description": "currency of the "
+                                                    "pending amount "
+                                                    "(informational)"},
+        "resource.amount.chain": {"type": "string", "required": False,
+                                  "description": "fallback source for "
+                                                 "chain when subject.chain "
+                                                 "is absent"},
+        "requested_at": {"type": "string", "required": False,
+                         "description": "ISO-8601 timestamp of the "
+                                        "caller's request (informational, "
+                                        "not validated)"},
+    },
+    "response": {
+        "schema": {"type": "string", "required": True,
+                  "enum": ["x402-trust-evaluation-v0.1"],
+                  "description": "wire schema identifier for the result"},
+        "decision": {"type": "string", "required": True,
+                    "enum": ["PASS", "FAIL", "UNCERTAIN"],
+                    "description": "the gate decision"},
+        "score": {"type": "number|null", "required": True,
+                 "description": "0-1 normalized trust score, or null when "
+                                "there is not enough evidence to publish "
+                                "one — never a fabricated number"},
+        "null_reason": {"type": "string", "required": False,
+                        "enum": ["unknown_subject", "unsupported_chain",
+                                 "insufficient_signal"],
+                        "description": "present iff score is null, "
+                                       "explaining why; absent whenever "
+                                       "score is a number"},
+        "reason_code": {"type": "string", "required": True,
+                        "enum": list(_EVAL_REASON_CODE_NOTES),
+                        "description": "machine-readable rule that fired; "
+                                       "see reason_codes below for meanings"},
+        "direction": {"type": "string", "required": True,
+                     "enum": ["seller", "buyer"],
+                     "description": "echoes the request's direction"},
+        "basis": {
+            "type": "array of objects", "required": True,
+            "description": "typed evidence entries supporting the "
+                           "decision; empty when there is no evidence at "
+                           "all (e.g. an unknown wallet)",
+            "entry_fields": {
+                "class": {"type": "string",
+                         "enum": list(_EVAL_EVIDENCE_CLASSES),
+                         "description": "evidence class — see `classes` "
+                                        "below; a FAIL always has at least "
+                                        "one entry with class curated or "
+                                        "behavioral (block-provenance rule)"},
+                "kind": {"type": "string",
+                        "description": "what was observed, e.g. "
+                                       "first_party_probe, seller_score, "
+                                       "eas_anchor"},
+                "ref": {"type": "string|null",
+                       "description": "pointer to the evidence: a "
+                                      "chain-prefixed tx ref "
+                                      "(\"base:tx:0x…\") for a probe, or "
+                                      "the same sha256: evidence_uri for "
+                                      "score/anchor entries; null if none"},
+                "observed_at": {"type": "string|null",
+                                "description": "date the underlying fact "
+                                               "was observed (probe date "
+                                               "or snapshot date); null if "
+                                               "unknown"},
+            },
+            "classes": dict(_EVAL_EVIDENCE_CLASS_NOTES),
+        },
+        "evidence_uri": {"type": "string|null", "required": True,
+                         "description": "sha256: content address of the "
+                                        "nightly snapshot backing this "
+                                        "decision; null when there is no "
+                                        "on-host snapshot to point at"},
+        "evidence": {"type": "object", "required": True,
+                    "description": "small supporting details keyed by "
+                                   "field name (settlement_tx, "
+                                   "http_status, snapshot_date, anchors, "
+                                   "…) — never the full snapshot itself"},
+        "ttl": {"type": "integer", "required": True,
+               "description": "seconds this decision should be considered "
+                              "fresh"},
+        "issued_at": {"type": "string", "required": True,
+                     "description": "ISO-8601 UTC timestamp this decision "
+                                    "was computed"},
+        "expires_at": {"type": "string", "required": True,
+                       "description": "ISO-8601 UTC timestamp = issued_at "
+                                      "+ ttl seconds"},
+        "provider": {"type": "string", "required": True,
+                    "enum": ["merona"],
+                    "description": "constant identifying this provider"},
+        "disclaimer": {"type": "string", "required": True,
+                       "description": "human-readable framing of what the "
+                                      "decision does and doesn't mean"},
+        "envelope": {
+            "type": "object", "required": False,
+            "description": "signed-card envelope; present iff this "
+                           "deployment has envelope signing enabled "
+                           "(X402_TRUST_SIGNING_KEY configured) — absent "
+                           "entirely otherwise, never null/empty",
+            "entry_fields": {
+                "canonicalisation": {"type": "string",
+                    "enum": ["urn:x402:canonicalisation:jcs-rfc8785-v1"],
+                    "description": "canonicalisation algorithm the "
+                                   "signature is computed over (RFC 8785 "
+                                   "JCS) — pinned, one value today"},
+                "alg": {"type": "string", "enum": ["Ed25519"],
+                       "description": "signature algorithm"},
+                "kid": {"type": "string",
+                       "description": "first 12 hex chars of sha256(raw "
+                                      "Ed25519 public key) — matches a "
+                                      "`kid` in the jwks.json document at "
+                                      "`public_key_url`"},
+                "card_ref": {"type": "string",
+                            "description": "\"sha256:\" + sha256 of the "
+                                           "JCS-canonical response body "
+                                           "WITHOUT this envelope field — "
+                                           "a content address for the "
+                                           "signed card"},
+                "signature": {"type": "string",
+                             "description": "Ed25519 signature over the "
+                                            "same canonical bytes "
+                                            "card_ref hashes, "
+                                            "base64url-encoded, no "
+                                            "padding"},
+                "public_key_url": {"type": "string",
+                                   "description": "JWKS document "
+                                                  "publishing the public "
+                                                  "key for `kid` "
+                                                  "(GET /.well-known/"
+                                                  "jwks.json)"},
+            },
+        },
+    },
+    "reason_codes": dict(_EVAL_REASON_CODE_NOTES),
+}
 
 
 def endpoint_lookup(origin: str) -> tuple[int, dict]:
@@ -1173,12 +1686,18 @@ out, <code>direction: seller</code></span></div>
   -d '{"schema":"x402-trust-query-v0.1","direction":"seller",
        "subject":{"wallet":"0xSELLER","chain":"base"}}'
 <b># FAIL only on receipt-proven facts — the settlement tx ships in `evidence`</b>
-<b># unknown sellers return score:null with a reason, never a fabricated number</b>
-<b># evidence_uri is content-addressed (sha256: nightly anchored snapshot)</b></pre>
+<b># basis[] entries are typed {class,kind,ref,observed_at}; class is one of</b>
+<b># curated/behavioral/community/attested — a FAIL always cites curated or</b>
+<b># behavioral evidence (never attested/community alone)</b>
+<b># unknown sellers return score:null + null_reason, never a fabricated number</b>
+<b># evidence_uri is content-addressed (sha256: nightly anchored snapshot);</b>
+<b># issued_at/expires_at (= issued_at + ttl) bound how long the decision is fresh</b></pre>
 <p class="tag">Implements the trust-provider extension proposed in
 <a href="https://github.com/x402-foundation/x402/issues/2299">x402#2299</a> —
 the seller direction: merona actually pays sellers and records whether they
-deliver. Chains: base · polygon · solana.</p>
+deliver. Chains: base · polygon · solana. Provider descriptor:
+<a href="/.well-known/x402-trust-provider">/.well-known/x402-trust-provider</a>
+· field-level schema: <a href="/v1/spec">/v1/spec</a>.</p>
 
 <h2 id="pro">Pro — bulk + history · $300/mo</h2>
 <div class="ep"><code>GET /v1/pro/scores?chain=</code><span>every seller's latest score for a chain, bulk</span></div>
@@ -1335,6 +1854,8 @@ class Handler(BaseHTTPRequestHandler):
                             "direction": "seller",
                             "subject": {"wallet": "0x…", "chain": "base"}},
                 "free": True,
+                "descriptor": PUBLIC_BASE + "/.well-known/x402-trust-provider",
+                "spec": PUBLIC_BASE + "/v1/spec",
                 "docs": PUBLIC_BASE + "/#evaluate"}, cache="public, max-age=300")
         if path == "/outreach/review":
             # Read-only approval review page. Loading it NEVER sends (email
@@ -1378,6 +1899,23 @@ class Handler(BaseHTTPRequestHandler):
             # proof that whoever holds GLAMA_MAINTAINER_EMAIL runs the server.
             # Public contact address only — never a key, never a token.
             return self._send(200, GLAMA_WELL_KNOWN)
+        if path == "/.well-known/x402-trust-provider":
+            # Machine-readable provider descriptor for the x402
+            # trust-provider extension (x402#2299 draft-02) — same
+            # caching/no-auth style as the glama.json route above; this
+            # one's audience is agents deciding whether/how to call
+            # POST /v1/trust/evaluate.
+            return self._send(200, TRUST_PROVIDER_DESCRIPTOR)
+        if path == "/.well-known/jwks.json":
+            # Public half of the envelope signing key (see _build_envelope's
+            # docstring for the verification recipe). {"keys": []} — not an
+            # error — when X402_TRUST_SIGNING_KEY isn't configured.
+            return self._send(200, _jwks())
+        if path == "/v1/spec":
+            # Field-level schema for x402-trust-query-v0.1 (request) and
+            # x402-trust-evaluation-v0.1 (response) — hand-written, not
+            # derived, so it documents what merona actually returns.
+            return self._send(200, TRUST_API_SPEC)
         if path.startswith("/v1/pro/"):
             # Read-only bulk tier, gated on a pro key — never x402 (this
             # prefix is deliberately outside the payable-prefix tuple below)

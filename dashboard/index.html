@@ -452,7 +452,13 @@
   /* --- evidence strip: ledger/watching/observatory collapsed + popovers --- */
   /* left-flowing cluster; the declare link floats right */
   .ledger.evidence{overflow:visible;justify-content:flex-start;
-    gap:clamp(14px,1.9vw,30px)}
+    column-gap:clamp(12px,1.5vw,24px)}
+  /* The 4th chip (REAL SELLERS) made the strip overflow at the capped
+     1380px width and wrap to a 2nd line. Reclaim room by dropping the
+     LEDGER chip's inline per-chain breakdown — the same Base/Polygon/Solana
+     figures are one click away in the LEDGER panel — so the strip stays a
+     single line without wrapping or colliding with the declare link. */
+  .ledger.evidence .lchains{display:none}
   .edecl{margin-left:auto;font-size:10px;color:#b0731f;text-decoration:none;
     border-bottom:1px solid rgba(176,115,31,.35);white-space:nowrap}
   .edecl:hover{color:#8f5c14}
@@ -482,11 +488,43 @@
   .epanel .estat{display:flex;justify-content:space-between;gap:18px}
   .epanel .estat .ek{color:#8a8095;font-size:10px;letter-spacing:.1em;
     text-transform:uppercase}
+  /* Real Seller Index ladder — a compact table inside the same .epanel shell,
+     so it needs no color/font outside the existing chip palette. .epanel's
+     base white-space:nowrap is for its one-line .estat rows; the ladder wraps
+     multiple rows, so it's overridden here. Right-anchored (not the base
+     centre): REAL SELLERS is the rightmost expandable chip, so the panel
+     grows leftward from the chip's right edge — toward the page centre,
+     clipping neither viewport edge. */
+  .sidxpanel{white-space:normal; left:auto; right:0;
+    transform:translate(0,6px); min-width:398px; max-width:min(430px,92vw)}
+  .ewrap.open .sidxpanel{transform:translate(0,0)}
+  .sitable{display:flex; flex-direction:column; gap:5px}
+  /* Fixed column widths (one shared 1fr) so columns line up across the
+     per-row grids; wide enough that the long tier names (Established/
+     Substantial) never collide with the evidence text and the thresholds
+     never wrap. */
+  .sirow{display:grid; grid-template-columns:96px minmax(122px,1fr) 56px 62px;
+    gap:10px; align-items:baseline}
+  .sirow.sihead{color:#8a8095; font-size:8.5px; letter-spacing:.1em;
+    text-transform:uppercase; font-family:var(--sans); font-weight:600;
+    border-bottom:1px solid rgba(21,14,31,.08); padding-bottom:5px; margin-bottom:1px}
+  .sit{color:var(--ink); font-weight:600; text-transform:capitalize; white-space:nowrap}
+  .sith{color:#8a8095; white-space:nowrap}
+  .sis{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .siv{text-align:right; color:var(--clean); font-variant-numeric:tabular-nums;
+    white-space:nowrap}
+  .sicap{margin-top:9px; font-family:var(--sans); font-size:10px;
+    color:var(--sub); line-height:1.4; max-width:100%; white-space:normal}
   @media(max-width:940px){
     .ewrap{display:block}
-    .epanel{position:relative;left:0;bottom:auto;transform:none;display:none;
+    .epanel{position:relative;left:0;right:auto;bottom:auto;transform:none;display:none;
       box-shadow:none;border:1px solid rgba(21,14,31,.08);margin-top:8px}
     .ewrap.open .epanel{display:flex;opacity:1;transform:none}
+    /* in-flow on mobile: shed the desktop min-width and tighten columns so
+       the ladder fits a phone without horizontal scroll */
+    .sidxpanel{min-width:0; max-width:100%}
+    .ewrap.open .sidxpanel{transform:none}
+    .sirow{grid-template-columns:78px minmax(104px,1fr) 50px 56px; gap:8px}
   }
 </style>
 </head>
@@ -557,7 +595,7 @@
         </div></div>
         <div class="q br"><div class="num muted" data-f="polygon.gross">$9.7M</div><div class="lab">Gross gasless USDC — incl. non-x402 rails</div></div>
       </div>
-      <div class="detail"><div class="dbody"><div class="rflag note" data-f="polygon.review">Restated 2026-08-01 — a 3-hop payment ring (~$149K across 32 wallets) is excluded from the clean figure via the published flags file. Found by our payer-side trace after our own 2-hop filters passed it; the correction is recorded, not buried. Evidence: docs/report/polygon_attribution_draft.md</div><div class="ladder"></div><div class="dchart" data-dc="polygon"></div></div></div>
+      <div class="detail"><div class="dbody"><div class="ladder"></div><div class="dchart" data-dc="polygon"></div></div></div>
     </article>
 
     <article class="card sol" data-chain="solana">
@@ -644,6 +682,23 @@
       <div class="estat"><span class="ek">Endpoints alive</span><b data-f="net.alive">—</b></div>
       <div class="estat"><span class="ek">Seller domains</span><b data-f="net.domains">—</b></div>
       <div class="estat"><span class="ek">Median ask</span><b data-f="net.ask">—</b></div>
+    </div>
+  </div>
+  <!-- Real Seller Index: same .ewrap/.eseg/.epanel popover-or-inflow-accordion
+       as LEDGER/WATCHING/OBSERVATORY above (see JS toggle — it queries ALL
+       .ewrap generically, so this gets desktop popover + mobile in-flow for
+       free). Starts hidden: the metrics blob may not carry seller_index yet
+       (a not-yet-regenerated nightly), and a headline-less accordion row is
+       worse than no row — applySellerIndex() reveals it once data lands. -->
+  <div class="ewrap" id="sidxwrap" style="display:none">
+    <button class="eseg" type="button" aria-expanded="false">
+      <span class="sq"></span><span class="lk">REAL SELLERS</span>
+      <b data-f="sidx.headline">—</b>&nbsp;active
+      <span class="chev2">▾</span></button>
+    <div class="epanel sidxpanel">
+      <div class="eph">Base · the real x402 economy, at every evidence bar</div>
+      <div class="sitable" id="sidxTable"></div>
+      <div class="sicap" data-f="sidx.caption"></div>
     </div>
   </div>
   <a class="edecl" href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">declare your relayer →</a>
@@ -1004,24 +1059,13 @@
     const d=new Date(s); return isNaN(d.getTime())?s:
     String(d.getUTCDate()).padStart(2,'0')+' '+MON[d.getUTCMonth()]+' '+d.getUTCFullYear(); };
   const setF=(k,v)=>document.querySelectorAll('[data-f="'+k+'"]').forEach(el=>el.textContent=v);
-  // Chains whose published clean figure is under active dispute. Set here (not
-  // in the blob) so a disclosure can never be lost to a stale precompute; the
-  // entry is removed only when the filter gap that caused it is closed.
-  // polygon: 2026-07-31 payer trace found a 3-hop carousel
-  // (lnpay -> premium seller -> 30 wallets -> lnpay) accounting for ~100% of
-  // the $143,926 "clean" figure. Our wash checks are all depth <= 2, so it
-  // passed. Withdrawn pending wash v3 (cycle detection). See
-  // docs/report/polygon_attribution_draft.md.
-  // REVIEW = active withdrawal (amber, suppresses the "Clean" label).
+  // Per-chain disclosure notes on a published clean figure, set here (not in
+  // the blob) so a disclosure can never be lost to a stale precompute.
+  // REVIEW = active withdrawal (amber, suppresses the "Clean" label);
   // NOTICE = provenance note on a restated-and-now-correct figure (calm).
-  // polygon moved REVIEW -> NOTICE on 2026-08-01 when the nightly began
-  // publishing the ring-excluded clean figure.
+  // Both empty: no chain currently carries a disclosure.
   const REVIEW={};   // active withdrawals: amber, suppresses the Clean label
-  const NOTICE={polygon:'Restated 2026-08-01 — a 3-hop payment ring '
-    +'(~$149K across 32 wallets) is excluded from the clean figure via the '
-    +'published flags file. Found by our payer-side trace after our own '
-    +'2-hop filters passed it; the correction is recorded, not buried. '
-    +'Evidence: docs/report/polygon_attribution_draft.md'};
+  const NOTICE={};   // restated-and-now-correct provenance notes
   function setHealth(h){ for(const k in h){ document.querySelectorAll('[data-h="'+k+'"]').forEach(d=>{
     d.className='dot '+(h[k]==='crit'?'crit':h[k]==='warn'?'warn':'good'); }); } }
   let lastSig='';
@@ -1155,9 +1199,41 @@
       if(G.solana&&G.solana.rows) setF('solana.archive',M(G.solana.rows)+' → Sep 2025');
     }
     applyInstr(d.instr||{});
+    applySellerIndex(d.seller_index);
     const sig=CH.map(c=>d.chains&&d.chains[c]&&d.chains[c].settlements).join(',');
     if(sig!==lastSig){ lastSig=sig; regrow(); }
   }catch(e){ console.error('[merona] render failed:', e); } }
+  // ---- Real Seller Index: a per-chain gradient of seller counts at
+  // increasing evidence thresholds, in place of one headline "N sellers" that
+  // can't tell a whale-fed wallet from real repeat demand. Leads with Base
+  // (the primary chain); other chains ride the same blob if/when they get a
+  // ladder of their own. Absent blob (nightly hasn't regenerated it yet) or
+  // an empty tier list -> the whole accordion row stays hidden, never a
+  // half-rendered table.
+  function applySellerIndex(si){ try{
+    const wrap=document.getElementById('sidxwrap');
+    if(!wrap) return;
+    const tiers=si&&si.tiers&&si.tiers.base;
+    if(!Array.isArray(tiers)||!tiers.length){ wrap.style.display='none'; return; }
+    const byTier={}; tiers.forEach(t=>{ byTier[t.tier]=t; });
+    // whole-dollar thresholds only (see SELLER_INDEX_TIERS) — no cents math needed
+    const thresh=t=>(t.min_payers===0&&t.min_usd===0)?'any payment':
+      '≥'+comma(t.min_payers)+' payers · ≥$'+comma(t.min_usd);
+    const rows=tiers.map(t=>'<div class="sirow"><span class="sit">'+t.tier+'</span>'
+      +'<span class="sith">'+thresh(t)+'</span>'
+      +'<span class="sis">'+comma(t.sellers)+'</span>'
+      +'<span class="siv">'+shortUsd(t.volume_usd)+'</span></div>').join('');
+    const table=document.getElementById('sidxTable');
+    if(table) table.innerHTML='<div class="sirow sihead"><span class="sit">Tier</span>'
+      +'<span class="sith">Evidence</span><span class="sis">Sellers</span>'
+      +'<span class="siv">Volume</span></div>'+rows;
+    const active=byTier.active, sub=byTier.substantial;
+    setF('sidx.headline', active?comma(active.sellers):'—');
+    if(active&&sub) setF('sidx.caption', comma(active.sellers)
+      +' sellers with real repeat demand · '+comma(sub.sellers)
+      +' substantial — the sellers behind the count, at every evidence bar.');
+    wrap.style.display='';               // reveal only once real data is in
+  }catch(e){ console.error('[merona] seller index render failed:', e); } }
   // ---- observatory: instrumentation digest (bazaar, liveness, domains,
   // facilitators, canary, 24h pulse) — every section optional, page never breaks
   const shortAddr=a=>!a?'':(a.length>13?a.slice(0,6)+'…'+a.slice(-4):a);
