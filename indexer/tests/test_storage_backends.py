@@ -96,3 +96,74 @@ def test_postgres_backend():
     s.commit_range("polygon", 1, 1, [_row("0xbig", 9, chain="polygon", amt=big)], "t")
     assert s.stats("polygon")["volume_base_units"] == big
     s.close()
+
+
+# --- bazaar_census: multi-leg schema + migration off the old single-leg PK ----
+# Audit fix: bazaar_census used to be PRIMARY KEY(measured_date, resource) —
+# accepts[0] only — so a resource with 2+ payment networks had legs 2..N
+# permanently invisible to the catalog side of the payTo-mismatch feed. It's
+# now PRIMARY KEY(measured_date, resource, accept_index).
+
+def test_bazaar_census_multi_leg_same_date_resource_both_persist(tmp_path):
+    """Two legs of the SAME resource on the SAME date (different network,
+    different payTo) must both persist — this is the whole point of the
+    fix. Exercises the new PK on a fresh SQLite table."""
+    s = Store(tmp_path / "t.sqlite")
+    n = s.record_bazaar_census_rows("2026-08-11", [
+        {"resource": "https://api.multi.example/v1", "accept_index": 0,
+         "network": "eip155:8453", "seller_wallet": "0x" + "aa" * 20},
+        {"resource": "https://api.multi.example/v1", "accept_index": 1,
+         "network": "eip155:137", "seller_wallet": "0x" + "bb" * 20},
+    ])
+    assert n == 2
+    rows = s.db.execute(
+        "SELECT accept_index, network, seller_wallet FROM bazaar_census "
+        "WHERE measured_date='2026-08-11' AND resource='https://api.multi.example/v1' "
+        "ORDER BY accept_index").fetchall()
+    assert rows == [(0, "eip155:8453", "0x" + "aa" * 20),
+                    (1, "eip155:137", "0x" + "bb" * 20)]
+    s.close()
+
+
+def test_bazaar_census_migrates_existing_old_schema_table(tmp_path):
+    """The production shape this migration exists for: an EXISTING sqlite
+    file created under the OLD PK(measured_date, resource) — pre-dating
+    accept_index — must open cleanly (existing row preserved as leg 0) and
+    then accept a second leg for the same date+resource without conflict."""
+    import sqlite3
+
+    path = tmp_path / "legacy.sqlite"
+    raw = sqlite3.connect(path)
+    raw.execute("""CREATE TABLE bazaar_census (
+        measured_date TEXT NOT NULL, resource TEXT NOT NULL, domain TEXT,
+        network TEXT, asset TEXT, amount_raw TEXT, amount_usd REAL,
+        seller_wallet TEXT, service TEXT,
+        PRIMARY KEY (measured_date, resource))""")
+    raw.execute(
+        "INSERT INTO bazaar_census(measured_date,resource,domain,network,"
+        "seller_wallet) VALUES(?,?,?,?,?)",
+        ("2026-08-11", "https://api.legacy.example/v1", "legacy.example",
+         "eip155:8453", "0x" + "11" * 20))
+    raw.commit()
+    raw.close()
+
+    s = Store(path)   # open_store-equivalent: runs _init_schema -> migration
+    assert "accept_index" in s._table_columns("bazaar_census")
+    pre = s.db.execute(
+        "SELECT accept_index, network, seller_wallet FROM bazaar_census "
+        "WHERE measured_date='2026-08-11'").fetchall()
+    assert pre == [(0, "eip155:8453", "0x" + "11" * 20)]   # old row = leg 0
+
+    # write a second leg for that SAME date+resource, different network —
+    # under the old PK this INSERT would collide; it must succeed now.
+    n = s.record_bazaar_census_rows("2026-08-11", [
+        {"resource": "https://api.legacy.example/v1", "accept_index": 1,
+         "network": "eip155:137", "seller_wallet": "0x" + "22" * 20},
+    ])
+    assert n == 1
+    rows = s.db.execute(
+        "SELECT accept_index, network, seller_wallet FROM bazaar_census "
+        "WHERE measured_date='2026-08-11' ORDER BY accept_index").fetchall()
+    assert rows == [(0, "eip155:8453", "0x" + "11" * 20),
+                    (1, "eip155:137", "0x" + "22" * 20)]
+    s.close()

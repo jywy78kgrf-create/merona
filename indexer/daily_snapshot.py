@@ -541,9 +541,12 @@ def build_instr_metrics(store: Store) -> dict:
             amts = sorted(a for (a,) in store.db.execute(store.q(
                 "SELECT amount_usd FROM bazaar_census WHERE measured_date=? "
                 "AND amount_usd IS NOT NULL"), (d,)).fetchall())
+            # bazaar_census is now one row per accepts LEG, not per resource
+            # (audit fix) — COUNT(*) would count a 2-leg resource twice and
+            # inflate "listed" beyond the catalog's actual resource count.
             listed = store.db.execute(store.q(
-                "SELECT COUNT(*) FROM bazaar_census WHERE measured_date=?"),
-                (d,)).fetchone()[0]
+                "SELECT COUNT(DISTINCT resource) FROM bazaar_census "
+                "WHERE measured_date=?"), (d,)).fetchone()[0]
             if amts:
                 pct = lambda p: amts[min(len(amts) - 1, int(len(amts) * p))]
                 out["prices"] = {"date": d, "listed": listed, "priced": len(amts),

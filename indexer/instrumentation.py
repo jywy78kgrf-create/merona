@@ -98,9 +98,17 @@ def _utcnow() -> str:
 
 # --- Bazaar endpoint list ---------------------------------------------------
 def fetch_bazaar_resources(max_pages: int = BAZAAR_MAX_PAGES) -> tuple[list, int]:
-    """Return ([{resource, origin, seller_wallet, network, service}], total).
-    Bounded to max_pages (100/page); `total` is the Bazaar's full count so the
-    caller can log sampled-vs-total (no silent truncation)."""
+    """Return ([{resource, accept_index, origin, seller_wallet, network,
+    service}], total). One entry per ACCEPTS LEG, not per catalog resource —
+    audit fix: keeping only accepts[0] meant 25% of catalog resources (those
+    with 2+ payment networks) had legs 2..N invisible to the census, so the
+    catalog side of the payTo-mismatch feed (payto_watch.py) could never
+    detect a payout swap on any leg but the first. accept_index is the
+    0-based position in the source `accepts` array (matches
+    bazaar_census.accept_index / bazaar_resources.csv's column of the same
+    name). Bounded to max_pages (100/page); `total` is the Bazaar's full
+    resource count (not leg count) so the caller can log sampled-vs-total (no
+    silent truncation)."""
     out, total, offset = [], None, 0
     s = requests.Session()
     for _ in range(max_pages):
@@ -114,35 +122,40 @@ def fetch_bazaar_resources(max_pages: int = BAZAAR_MAX_PAGES) -> tuple[list, int
             url = it.get("resource")
             if not url:
                 continue
-            acc = (it.get("accepts") or [{}])[0]
             p = urlparse(url)
             if not p.scheme or not p.hostname:
                 continue
-            # asked price: 'amount' in current Bazaar payloads; older listings
-            # used 'maxAmountRequired'. USD only derivable for USDC (6 dp).
-            amount_raw = acc.get("amount") or acc.get("maxAmountRequired")
-            asset = (acc.get("asset") or "").strip()
-            amount_usd = None
-            try:
-                if amount_raw is not None and asset.lower() in _USDC_ASSETS:
-                    amount_usd = int(amount_raw) / 1e6
-            except Exception:
-                pass
-            out.append({"resource": url,
-                        "origin": f"{p.scheme}://{p.netloc}",
-                        "domain": p.hostname,
-                        "seller_wallet": acc.get("payTo"),
-                        "network": norm_network(acc.get("network")),
-                        "network_raw": acc.get("network"),
-                        "asset": asset or None,
-                        "amount_raw": str(amount_raw) if amount_raw is not None else None,
-                        "amount_usd": amount_usd,
-                        "service": it.get("serviceName")})
+            accepts = it.get("accepts") or [{}]
+            for idx, acc in enumerate(accepts):
+                if not isinstance(acc, dict):
+                    continue
+                # asked price: 'amount' in current Bazaar payloads; older
+                # listings used 'maxAmountRequired'. USD only derivable for
+                # USDC (6 dp).
+                amount_raw = acc.get("amount") or acc.get("maxAmountRequired")
+                asset = (acc.get("asset") or "").strip()
+                amount_usd = None
+                try:
+                    if amount_raw is not None and asset.lower() in _USDC_ASSETS:
+                        amount_usd = int(amount_raw) / 1e6
+                except Exception:
+                    pass
+                out.append({"resource": url,
+                            "accept_index": idx,
+                            "origin": f"{p.scheme}://{p.netloc}",
+                            "domain": p.hostname,
+                            "seller_wallet": acc.get("payTo"),
+                            "network": norm_network(acc.get("network")),
+                            "network_raw": acc.get("network"),
+                            "asset": asset or None,
+                            "amount_raw": str(amount_raw) if amount_raw is not None else None,
+                            "amount_usd": amount_usd,
+                            "service": it.get("serviceName")})
         offset += 100
         if not items or (total is not None and offset >= total):
             break
         time.sleep(PROBE_DELAY_S)
-    return out, (total if total is not None else len(out))
+    return out, (total if total is not None else len({r["resource"] for r in out}))
 
 
 def _dedupe_by_origin(resources: list) -> list:
@@ -168,13 +181,23 @@ LIVENESS_402_FALLBACKS = int(os.environ.get("LIVENESS_402_FALLBACKS", "2"))
 def _origin_probe_plan(resources: list) -> list:
     """[(origin, [rep, fallback...])] in catalog order. Fallbacks are the
     middle and last of the origin's listing — deterministic, spread, and
-    re-derivable from the same census anyone else can fetch."""
+    re-derivable from the same census anyone else can fetch. `resources` now
+    carries one entry per accepts LEG (fetch_bazaar_resources), so a resource
+    with N payment legs would otherwise appear N times consecutively and skew
+    middle/last toward whichever URL has the most legs; liveness probes the
+    URL itself (no payment sent), not a specific leg, so dedupe to one entry
+    per distinct resource URL before picking."""
     by_origin, order = {}, []
+    seen_urls: dict = {}
     for res in resources:
         o = res["origin"]
         if o not in by_origin:
             by_origin[o] = []
             order.append(o)
+            seen_urls[o] = set()
+        if res["resource"] in seen_urls[o]:
+            continue
+        seen_urls[o].add(res["resource"])
         by_origin[o].append(res)
     plan = []
     for o in order:
@@ -452,9 +475,14 @@ def _isolate(name: str, fn, *a):
 
 # --- 5. full Bazaar census + price book --------------------------------------
 def record_bazaar_census(store, date: str, resources: list) -> int:
-    """One compact row per listed resource per day — the price book (asked
-    prices) and the churn record (arrivals/departures) in one table."""
-    rows = [{"resource": r["resource"], "domain": r.get("domain"),
+    """One compact row per listed ACCEPTS LEG per day — the price book (asked
+    prices) and the churn record (arrivals/departures) in one table. A
+    resource with N payment legs (N distinct entries in `accepts`) writes N
+    rows, keyed by accept_index — see bazaar_census's docstring in storage.py
+    for why (audit fix: accepts[0]-only blinded the catalog-side payTo-watch
+    to legs 2..N)."""
+    rows = [{"resource": r["resource"], "accept_index": r.get("accept_index", 0),
+             "domain": r.get("domain"),
              "network": r.get("network"), "asset": r.get("asset"),
              "amount_raw": r.get("amount_raw"), "amount_usd": r.get("amount_usd"),
              "seller_wallet": r.get("seller_wallet"), "service": r.get("service")}
@@ -720,14 +748,20 @@ def run_instrumentation(store, date: str, fingerprint: dict,
     resources = None
     try:
         resources, total = fetch_bazaar_resources()
+        # `resources` is one entry per ACCEPTS LEG now (fetch_bazaar_resources);
+        # dedupe for the resource/origin counts so this doesn't read as a
+        # catalog that grew 25% overnight.
+        n_resources = len({r["resource"] for r in resources})
         origins = len({r["origin"] for r in resources})
-        print(f"[instr] bazaar: sampled {len(resources)} resources / {origins} "
-              f"origins (of {total} total listed)")
+        print(f"[instr] bazaar: sampled {n_resources} resources "
+              f"({len(resources)} accepts legs) / {origins} origins "
+              f"(of {total} total listed)")
         # Persist the sampled-vs-listed counts: the dashboard reports Bazaar
         # size next to measured liveness, and the log line alone isn't queryable.
         try:
             store.set_meta("bazaar_last", {"date": date, "total_listed": total,
-                                           "sampled": len(resources),
+                                           "sampled": n_resources,
+                                           "sampled_legs": len(resources),
                                            "origins": origins})
         except Exception:
             pass

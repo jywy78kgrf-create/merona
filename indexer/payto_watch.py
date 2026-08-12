@@ -42,6 +42,30 @@ DISCLAIMER = (
     "before acting; verify before quoting.")
 
 
+# The catalog and live 402 bodies name the same chain inconsistently in the
+# wild — the committed census carries BOTH "base" (13,107 rows) and
+# "eip155:8453" (9,914 rows). Mismatch comparison is per-network (see
+# compute_feed), so the two sides must agree on what a network is CALLED
+# before pairing, or naming drift silently unpairs them. Canonical form is
+# CAIP-2 where one exists; original labels are preserved in feed entries
+# for display.
+_NET_ALIASES = {
+    "base": "eip155:8453", "base-sepolia": "eip155:84532",
+    "polygon": "eip155:137", "polygon-amoy": "eip155:80002",
+    "arbitrum": "eip155:42161", "arbitrum-one": "eip155:42161",
+    "optimism": "eip155:10", "avalanche": "eip155:43114",
+    "bsc": "eip155:56", "bnb": "eip155:56",
+    # Solana mainnet's CAIP-2 genesis-hash form, lowercased (labels are
+    # lowercased for canonicalization only — addresses never are)
+    "solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp": "solana",
+}
+
+
+def _canon_net(n: str | None) -> str:
+    s = (n or "").strip().lower()
+    return _NET_ALIASES.get(s, s)
+
+
 def _norm(a: str | None) -> str | None:
     if not a or not isinstance(a, str):
         return None
@@ -74,45 +98,100 @@ def compute_feed(store) -> dict:
         "SELECT MAX(measured_date) FROM live_offers").fetchone()[0]
 
     # --- 1. catalog vs live (same URL, both sides observed) ------------------
+    # Comparison is PER NETWORK (canonicalized via _canon_net), not per
+    # resource. The original version unioned live payTos across networks,
+    # so a correct leg on chain A masked a mismatched leg on chain B — a
+    # false negative reported by @chikop2p (2026-08-11). Per-network keying
+    # fixes the masking and narrows a flagged entry's live_paytos to the
+    # offending leg instead of every chain's. (bazaar_census is now one row
+    # per ACCEPTS LEG — PRIMARY KEY(measured_date, resource, accept_index),
+    # audit fix for the same class of catalog-side blind spot — so a
+    # multi-network resource genuinely has multiple rows here; the per-net
+    # sets below are exactly what makes that multi-row shape usable.)
+    # When a URL's networks cannot be paired AT ALL (a naming scheme
+    # _canon_net doesn't know, or the probe never captured the advertised
+    # chain's leg), fall back to the legacy resource-level union comparison
+    # so unknown schemes degrade to old coverage instead of silence.
     catalog_vs_live = []
     if census_date and offers_date:
-        advertised = {}   # resource -> (advertised payTo, network)
+        adv_by_net: dict = {}   # (resource, canon net) -> set of payTos
+        adv_by_url: dict = {}   # resource -> [(payTo, original net label)]
         for res, w, net in store.db.execute(store.q(
                 "SELECT resource, seller_wallet, network FROM bazaar_census "
                 "WHERE measured_date=? AND seller_wallet IS NOT NULL"),
                 (census_date,)):
-            advertised[res] = (_norm(w), net)
-        live: dict = {}   # endpoint_url -> [(payto, network)]
+            p = _norm(w)
+            if p:
+                adv_by_net.setdefault((res, _canon_net(net)), set()).add(p)
+                adv_by_url.setdefault(res, []).append((p, net))
+        live: dict = {}   # (endpoint_url, canon net) -> (orig label, {payTo})
         for url, pt, net in store.db.execute(store.q(
                 "SELECT endpoint_url, payto, network FROM live_offers "
                 "WHERE measured_date=?"), (offers_date,)):
-            live.setdefault(url, []).append((_norm(pt), net))
-        for url, offs in sorted(live.items()):
-            adv = advertised.get(url)
-            if not adv or not adv[0]:
-                continue
-            live_set = {p for p, _ in offs if p}
-            if not live_set or adv[0] in live_set:
-                continue
-            catalog_vs_live.append({
-                "resource": url,
-                "advertised_payto": adv[0],
-                "advertised_network": adv[1],
-                "live_paytos": sorted(live_set),
-                "catalog_date": census_date,
-                "probe_date": offers_date})
+            p = _norm(pt)
+            if p:
+                live.setdefault((url, _canon_net(net)),
+                                (net, set()))[1].add(p)
+
+        paired = {url for (url, cnet) in live if (url, cnet) in adv_by_net}
+        legacy_done: set = set()
+        for (url, cnet), (live_net, live_set) in sorted(live.items()):
+            advset = adv_by_net.get((url, cnet))
+            if advset:
+                # same network on both sides: any advertised wallet being
+                # asked for live means no mismatch on this leg
+                if not advset.isdisjoint(live_set):
+                    continue
+                orig = [n for p, n in adv_by_url[url] if p in advset]
+                catalog_vs_live.append({
+                    "resource": url,
+                    "advertised_payto": sorted(advset)[0],
+                    "advertised_network": orig[0] if orig else live_net,
+                    "live_network": live_net,
+                    "live_paytos": sorted(live_set),
+                    "catalog_date": census_date,
+                    "probe_date": offers_date})
+            elif url not in paired and url not in legacy_done:
+                # no network pairing anywhere for this URL — legacy
+                # resource-level comparison against the live union (one
+                # entry per URL), kept so unknown naming schemes degrade to
+                # the old coverage instead of silence
+                legacy_done.add(url)
+                advs = adv_by_url.get(url)
+                union: dict = {}   # payTo -> orig live net label (any)
+                for (u, _), (n, s) in live.items():
+                    if u == url:
+                        for p in s:
+                            union.setdefault(p, n)
+                if advs and all(p not in union for p, _ in advs):
+                    catalog_vs_live.append({
+                        "resource": url,
+                        "advertised_payto": advs[0][0],
+                        "advertised_network": advs[0][1],
+                        "live_network": "/".join(sorted(set(union.values()))),
+                        "live_paytos": sorted(union),
+                        "catalog_date": census_date,
+                        "probe_date": offers_date})
 
     # --- 2. payTo rotation over census history -------------------------------
+    # Keyed PER NETWORK (canonicalized via _canon_net), same reasoning as
+    # section 1: bazaar_census now carries multiple legs per resource (one
+    # per accepts entry), so a resource that legitimately advertises a
+    # DIFFERENT wallet per chain (base->A, polygon->B, unchanged over time)
+    # must never read as a "rotation" — that would be a false accusation on
+    # a public feed. Only a wallet change WITHIN the same network is a
+    # rotation.
     rotations = []
-    hist: dict = {}   # resource -> {payto: [first, last]}
-    for res, w, lo, hi in store.db.execute(
-            "SELECT resource, seller_wallet, MIN(measured_date), "
+    hist: dict = {}   # (resource, canon net) -> {payto: [first, last]}
+    for res, w, net, lo, hi in store.db.execute(
+            "SELECT resource, seller_wallet, network, MIN(measured_date), "
             "MAX(measured_date) FROM bazaar_census "
-            "WHERE seller_wallet IS NOT NULL GROUP BY resource, seller_wallet"):
+            "WHERE seller_wallet IS NOT NULL "
+            "GROUP BY resource, seller_wallet, network"):
         p = _norm(w)
         if p:
-            hist.setdefault(res, {})[p] = [lo, hi]
-    for res, wallets in hist.items():
+            hist.setdefault((res, _canon_net(net)), {})[p] = [lo, hi]
+    for (res, cnet), wallets in hist.items():
         if len(wallets) < 2:
             continue
         timeline = sorted(
@@ -120,7 +199,7 @@ def compute_feed(store) -> dict:
              for p, (lo, hi) in wallets.items()),
             key=lambda d: (d["first_seen"], d["payto"]))
         rotations.append({
-            "resource": res, "n_wallets": len(wallets),
+            "resource": res, "network": cnet, "n_wallets": len(wallets),
             "timeline": timeline,
             "latest_change": max(d["first_seen"] for d in timeline)})
     rotations.sort(key=lambda d: d["latest_change"], reverse=True)

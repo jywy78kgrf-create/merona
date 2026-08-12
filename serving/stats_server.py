@@ -170,7 +170,6 @@ _PROBE_RL = _Bucket(float(os.environ.get("PROBE_RPM", "30")),
 # Only documents that ship in the public repo may appear here — this is the
 # same set the public-release allowlist publishes.
 _DOC_SLUGS = {
-    "reconciliation": "docs/report/reconciliation_2026-07.md",
     "headline":       "docs/report/headline_finding.md",
     "coverage":       "docs/report/cross_chain_coverage_2026-08.md",
     "census-gap":     "docs/report/census_gap.md",
@@ -183,12 +182,13 @@ _DOC_SLUGS = {
 
 # Curated feed entries for /feed.xml (slug, ISO date, kind, title, summary).
 # Mismatch items are appended live from the nightly feed at request time.
+    # 2026-08-12: the "$143,926 -> ~$1" Polygon correction item was removed
+    # here to match d81e1a9 (which pulled the narrative from findings/docs
+    # but missed this list): its doc was deleted, its link 404'd, and the
+    # ~$1 figure itself was later superseded ($32,765 after the
+    # wash_scores_once restatement) — the feed was republishing a retracted
+    # number nightly.
 _FINDINGS = [
-    ("reconciliation", "2026-07-31", "CORRECTION",
-     "Polygon: $143,926 withdrawn and restated to ~$1",
-     "A payer-side trace showed the published clean figure was ~100% one "
-     "funded loop — 5M sub-cent transactions cycling back to a single "
-     "wallet. Withdrawn and restated; the original stays visible."),
     ("headline", "2026-07-28", "FINDING",
      "The ~100x mirage: raw feed vs what actually settles",
      "On Base in July the raw EIP-3009 stream ran $64.5M against ~$332K of "
@@ -399,6 +399,85 @@ def compute():
                 "cycle": cycle, "health": health}
     finally:
         store.close()
+
+
+def build_seller_index_feed(stats: dict) -> dict | None:
+    """Maps the cached stats blob (compute()'s return shape) to the public,
+    citable Real Seller Index feed served at /real-seller-index.json — the
+    machine twin of the /real-seller-index page. Pure dict-in/dict-out on
+    purpose (no DB, no filesystem, no clock): unit-testable on a synthetic
+    blob, and the exact function GET /real-seller-index.json calls on the
+    live cache.
+
+    WHY this exists: a number gets cited when it is stable (a fixed shape),
+    fresh (dated), named (methodology attached), and checkable (links to a
+    verifier). A dashboard accordion chip is none of those to an outside
+    reader — a journalist or an aggregator (DefiLlama, x402scan) can't link
+    to a chip. This is the linkable, machine-consumable form of the same
+    number.
+
+    Returns None when the blob carries no seller_index at all — the nightly
+    hasn't produced one yet, or its precompute failed (see
+    daily_snapshot.build_seller_index, which is best-effort and non-fatal) —
+    so the route answers 503 instead of ever inventing numbers.
+    """
+    if not isinstance(stats, dict):
+        return None
+    si = stats.get("seller_index")
+    if not isinstance(si, dict):
+        return None
+    tiers_by_chain = si.get("tiers")
+    if not isinstance(tiers_by_chain, dict):
+        return None
+
+    # Prefer the nightly's own as-of timestamp (metrics_at, set once per
+    # precompute) over generated_at (this process's last refresh) — the
+    # citation should date the DATA, not the last time this box happened to
+    # poll it.
+    as_of = stats.get("metrics_at") or stats.get("generated_at")
+    as_of_date = (as_of[:10] if isinstance(as_of, str) and len(as_of) >= 10
+                  else (as_of or "unknown"))
+
+    def _n(v):
+        try:
+            return f"{int(v):,}"
+        except Exception:
+            return "—"                     # em dash: number unavailable
+
+    # Base is the primary chain (see daily_snapshot._SELLER_INDEX_CHAINS);
+    # the headline citation quotes its "active"/"any" tiers specifically,
+    # same two numbers the dashboard's accordion headline+caption already
+    # lead with (applySellerIndex in dashboard/index.html).
+    base_tiers = tiers_by_chain.get("base") or []
+    by_tier = {t.get("tier"): t for t in base_tiers if isinstance(t, dict)}
+    active_n = (by_tier.get("active") or {}).get("sellers")
+    any_n = (by_tier.get("any") or {}).get("sellers")
+
+    citation = (f"merona Real Seller Index, {as_of_date}: {_n(active_n)} "
+                f"active x402 sellers on Base ({_n(any_n)} addresses ever "
+                f"paid). merona.io/real-seller-index")
+
+    return {
+        "name": "merona Real Seller Index",
+        "version": "1",
+        "as_of": as_of,
+        "scope": ("x402-scoped: settlements via registered x402 "
+                  "facilitators only; distinct external payers exclude "
+                  "self-pay; lifetime USDC volume"),
+        # Only chains actually present in the blob — a new blob key (or a
+        # chain the nightly hasn't scored yet) is never silently invented
+        # here, same discipline compute() uses for the blob itself.
+        "chains": {ch: {"tiers": t} for ch, t in tiers_by_chain.items()},
+        "citation": citation,
+        "license": "CC BY 4.0 — free to cite and reuse with attribution to merona",
+        "links": {
+            "page": "https://merona.io/real-seller-index",
+            "methodology": "https://merona.io/real-seller-index#method",
+            "dashboard": "https://merona.io",
+            "anchors": "https://github.com/jywy78kgrf-create/merona-anchors",
+            "verify": "https://github.com/jywy78kgrf-create/merona/tree/main/conformance",
+        },
+    }
 
 
 # ---- probe: live, indexed lookups only ------------------------------------
@@ -759,6 +838,20 @@ class Handler(BaseHTTPRequestHandler):
                 # never echo _state["err"] (raw backend/DB text) to clients (audit LB-5)
                 self._send(503, json.dumps({"error": "warming up"}).encode(),
                            "application/json")
+        elif path == "/real-seller-index.json":
+            # The citable machine feed for the Real Seller Index page — built
+            # from the same cached blob /stats.json serves (no extra DB
+            # touch), so it shares that endpoint's freshness and TTL. 503,
+            # never a fabricated body, when the nightly hasn't produced a
+            # seller_index yet (see build_seller_index_feed's docstring).
+            feed = build_seller_index_feed(_state["data"]) if _state["data"] else None
+            if feed is not None:
+                self._send(200, json.dumps(feed).encode(),
+                           "application/json", cache="public, max-age=120")
+            else:
+                self._send(503, json.dumps(
+                    {"error": "seller index not yet available"}).encode(),
+                    "application/json")
         elif path == "/mismatches":
             # human-readable viewer for the free feed (renders /mismatches.json
             # client-side) — the dashboard's floating card lands here
@@ -794,13 +887,14 @@ class Handler(BaseHTTPRequestHandler):
                            cache="public, max-age=900")
             except Exception:
                 self._send(503, b"feed unavailable", "text/plain")
-        elif path in ("/privacy", "/editorial", "/findings"):
+        elif path in ("/privacy", "/editorial", "/findings", "/real-seller-index"):
             # Static pages. Named from a fixed whitelist, never from the
             # request path — the mapping is the only thing that can reach disk.
             try:
                 name = {"/privacy": "privacy.html",
                         "/editorial": "editorial.html",
-                        "/findings": "findings.html"}[path]
+                        "/findings": "findings.html",
+                        "/real-seller-index": "real-seller-index.html"}[path]
                 body = (ROOT / "dashboard" / name).read_bytes()
                 self._send(200, body, "text/html; charset=utf-8",
                            cache="public, max-age=3600")

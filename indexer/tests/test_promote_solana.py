@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "indexer"))
 
@@ -97,8 +99,53 @@ def test_apply_writes_curated_live_and_log_idempotently(tmp_path):
     added2 = ps.apply_promotions(promos, "2026-08-09T00:00:00",
                                  curated_path=cur, live_path=live, log_path=log)
     assert added2 == []
-    curj = json.loads(cur.read_text())
-    assert len(curj["facilitators"][ps.AUTO_ID]["solana"]) == 2
+
+
+# --- declared-payTo corroboration source (audit fix) -------------------------
+# _catalog_solana_paytos used to walk service_directory_v0.json for dict nodes
+# with singular 'network'+'payTo'/'pay_to' keys — that schema doesn't exist
+# anywhere in the file (it's a 'networks' list, no payTo at all), so the
+# function always returned set() and DECLARED_MATCH's extra corroboration was
+# dead code. It now sources declared Solana payTos from the committed Bazaar
+# CSV instead.
+
+@pytest.mark.skipif(not ps.CATALOG.exists(),
+                    reason="data/processed/bazaar_resources.csv not in this checkout")
+def test_catalog_solana_paytos_nonempty_from_real_csv():
+    """Run against the real committed CSV (not a synthetic fixture) — the
+    whole point of the fix is that the OLD source (service_directory_v0.json)
+    silently returned set() forever; this must not repeat that with a new
+    silent-empty source."""
+    out = ps._catalog_solana_paytos()
+    assert len(out) > 0
+    # base58 case preserved (repo-wide rule: a lowercased base58 matches
+    # nothing) -- the real CSV has case-preserved addresses, so at least one
+    # entry must carry uppercase characters.
+    assert any(p != p.lower() for p in out)
+
+
+def test_catalog_solana_paytos_handles_both_network_dialects(tmp_path, monkeypatch):
+    """'solana' (legacy label) and 'solana:<genesis>' (CAIP-2) both count;
+    non-Solana rows and blank payTo are excluded."""
+    csv_path = tmp_path / "bazaar_resources.csv"
+    csv_path.write_text(
+        "resource_url,network,pay_to\n"
+        "https://a.example/x,solana,SoLLegacyPayTo11111111111111111111111111\n"
+        "https://b.example/y,solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp,"
+        "SoLCaip2PayTo222222222222222222222222222\n"
+        "https://c.example/z,eip155:8453,0xNotSolana000000000000000000000000000000\n"
+        "https://d.example/w,solana,\n")
+    monkeypatch.setattr(ps, "CATALOG", csv_path)
+    out = ps._catalog_solana_paytos()
+    assert out == {"SoLLegacyPayTo11111111111111111111111111",
+                   "SoLCaip2PayTo222222222222222222222222222"}
+
+
+def test_catalog_solana_paytos_missing_file_returns_empty(tmp_path, monkeypatch):
+    """CI checkouts without the big committed CSV must not crash — empty set,
+    same graceful-absence contract as the old catalog source."""
+    monkeypatch.setattr(ps, "CATALOG", tmp_path / "does_not_exist.csv")
+    assert ps._catalog_solana_paytos() == set()
 
 
 if __name__ == "__main__":

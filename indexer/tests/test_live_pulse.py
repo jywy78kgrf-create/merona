@@ -150,6 +150,11 @@ def test_rpc_failure_leaves_the_window_uncounted_not_skipped(tmp_path,
     state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
     assert state["base"]["cursor"] == 100      # untouched
     assert "error" in state["base"]
+    # the state file is served verbatim at merona.io/live.json — the raw
+    # exception ("RpcError: boom", RPC method names, provider messages) must
+    # never reach it; the public marker is generic (2026-08-12 audit)
+    assert "boom" not in state["base"]["error"]
+    assert "RpcError" not in state["base"]["error"]
     cl.fail = False                             # RPC recovers
     state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
     assert state["base"]["scoped_delta"] == 1  # the window was re-counted

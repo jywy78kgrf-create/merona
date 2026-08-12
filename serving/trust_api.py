@@ -39,6 +39,7 @@ Run on the box (reuses the venv + /etc/x402-index.env):
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import json
 import os
@@ -576,14 +577,46 @@ X402_CATALOG_FILE = os.environ.get(
     "X402_CATALOG_FILE", str(ROOT / "data" / "processed" / "bazaar_resources.csv"))
 
 
+def _catalog_max_last_updated(path) -> str | None:
+    """Max value of the `last_updated` column across the catalog CSV at
+    `path`, or None if the column/file is missing or every value is empty.
+    Streams the file row by row (csv.reader over an open file handle) rather
+    than slurping ~32k rows into a list/DataFrame — this runs once at import
+    against a file that can be several MB. `last_updated` is an ISO-ish
+    (YYYY-MM-DD[...]) string, so plain lexicographic max is a valid max."""
+    try:
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames or "last_updated" not in reader.fieldnames:
+                return None
+            newest = None
+            for row in reader:
+                v = row.get("last_updated")
+                if v and (newest is None or v > newest):
+                    newest = v
+            return newest
+    except OSError:
+        return None
+
+
 def _load_discovery_basis(path) -> dict | None:
     """{"catalog": "bazaar", "snapshot_sha256": sha256 hex of the file,
-    "snapshot_date": UTC date (ISO) of the file's mtime} for the catalog
-    snapshot at `path`, or None when it's missing/unreadable — NEVER a
-    fabricated digest for a catalog we can't actually read. Every consumer of
-    this value (below) must omit the `discovery_basis` key entirely on None,
-    the same "absent, not invented" rule _load_signing_key follows for
-    envelope signing."""
+    "snapshot_date": UTC date (ISO) the snapshot FILE was last written
+    (mtime) — i.e. when this box last ran the pull, NOT when the underlying
+    catalog data itself is current, "catalog_max_last_updated": the newest
+    `last_updated` value actually present in the catalog's rows (the DATA
+    date)} for the catalog snapshot at `path`, or None when it's missing/
+    unreadable — NEVER a fabricated digest for a catalog we can't actually
+    read. Every consumer of this value (below) must omit the
+    `discovery_basis` key entirely on None, the same "absent, not invented"
+    rule _load_signing_key follows for envelope signing.
+
+    snapshot_date and catalog_max_last_updated answer different questions
+    and can legitimately diverge (a re-run that silently replayed a stale
+    cache is exactly the case that produces a fresh snapshot_date over old
+    data) — publishing BOTH, rather than just the mtime-derived one, is the
+    fix for that failure mode: the divergence itself is the signal a caller
+    needs, instead of a single date that looks authoritative either way."""
     try:
         p = Path(path)
         data = p.read_bytes()
@@ -594,9 +627,12 @@ def _load_discovery_basis(path) -> dict | None:
         "catalog": "bazaar",
         "snapshot_sha256": hashlib.sha256(data).hexdigest(),
         "snapshot_date": mtime.date().isoformat(),
+        "catalog_max_last_updated": _catalog_max_last_updated(p),
     }
 
 
+# Loaded/cached exactly once here, at import — the same posture the
+# docstring above describes (no per-request re-scan of a multi-MB CSV).
 DISCOVERY_BASIS = _load_discovery_basis(X402_CATALOG_FILE)
 
 
@@ -676,7 +712,14 @@ def _adverse_findings() -> dict:
         try:
             for f in json.loads(ADVERSE_PATH.read_text()).get("findings", []):
                 if f.get("chain") and f.get("address"):
-                    out[(f["chain"], f["address"].lower())] = f
+                    # normalization must MATCH the lookup side (trust_lookup
+                    # et al.): EVM lowercased, base58 case PRESERVED — a
+                    # lowercased base58 key matches nothing, which would
+                    # silently swallow any Solana adverse finding
+                    # (2026-08-12 audit)
+                    a = f["address"]
+                    out[(f["chain"],
+                         a.lower() if _HEX_ADDR.match(a) else a)] = f
         except Exception:
             out = {}
         _adverse = out
@@ -1421,12 +1464,21 @@ TRUST_API_SPEC = {
                                    "snapshot configured (X402_CATALOG_FILE) "
                                    "— absent entirely otherwise, never "
                                    "null. {catalog, snapshot_sha256, "
-                                   "snapshot_date}: the content-addressed "
+                                   "snapshot_date, catalog_max_last_"
+                                   "updated}: the content-addressed "
                                    "discovery-set snapshot the paid sweep "
                                    "drew its targets from, so a consumer "
                                    "can independently check whether a "
                                    "subject was even discoverable at "
-                                   "evaluation time (x402#2300)"},
+                                   "evaluation time (x402#2300). "
+                                   "snapshot_date is when this snapshot "
+                                   "FILE was last written (mtime); "
+                                   "catalog_max_last_updated is the newest "
+                                   "`last_updated` value actually present "
+                                   "in the catalog's rows (the DATA date) "
+                                   "— the two can diverge (e.g. a re-run "
+                                   "that replayed a stale cache), and that "
+                                   "divergence is itself the signal"},
             },
             "classes": dict(_EVAL_EVIDENCE_CLASS_NOTES),
         },
@@ -1519,9 +1571,10 @@ TRUST_API_SPEC = {
             "description": "present on EVERY /v1/delivery response "
                            "(not_evaluated or probed) when this deployment "
                            "has a readable catalog snapshot configured — "
-                           "same {catalog, snapshot_sha256, snapshot_date} "
-                           "shape as the curated basis entry above, from "
-                           "the same _load_discovery_basis loader"},
+                           "same {catalog, snapshot_sha256, snapshot_date, "
+                           "catalog_max_last_updated} shape as the curated "
+                           "basis entry above, from the same "
+                           "_load_discovery_basis loader"},
     },
 }
 
@@ -1825,7 +1878,12 @@ UA we send is listed at
 basis entries, <code>GET /v1/delivery</code>) carries its own
 <code>discovery_basis</code>: the content-addressed catalog snapshot the
 paid sweep drew its targets from, so absence from a sweep is never
-confused with a refusal.</p>
+confused with a refusal. It carries two dates on purpose —
+<code>snapshot_date</code> (when the snapshot file was last written) and
+<code>catalog_max_last_updated</code> (the newest listing date actually in
+the data) — because a re-run that silently replays a stale cache produces a
+fresh file with old data, and the divergence between those two dates is
+exactly how you'd catch that.</p>
 <p class="tag">Verify it yourself — zero-dependency, no auth:
 <a href="https://github.com/jywy78kgrf-create/merona/blob/main/conformance/check.py">conformance/check.py</a>
 runs 146 shape + signature checks against this live API, and
@@ -1874,6 +1932,19 @@ def _pay_params(path: str) -> tuple[float | None, str]:
     if path.startswith("/v1/delivery/"):
         return DELIVERY_PRICE_USD, DELIVERY_PAY_DESC
     return None, PAY_DESC
+
+
+_LOG_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9._/ -]+")
+
+
+def _mcp_log_name(raw: str) -> str:
+    """Sanitize attacker-controlled text (MCP clientInfo, unknown method
+    names) before it lands in the usage-log path field: keep a conservative
+    charset, collapse any run of anything else to one underscore, trim the
+    edges. No length cap here — callers slice to whatever fits their slot;
+    _meter's MAX_PATH_LOG truncates the whole path as the final backstop
+    regardless."""
+    return _LOG_NAME_UNSAFE.sub("_", raw).strip()
 
 
 def _meter(ident: str, path: str, status: int) -> None:
@@ -1964,6 +2035,11 @@ class Handler(BaseHTTPRequestHandler):
                               {"Retry-After": str(max(1, int(wait + 0.5)))},
                               cache="no-store")
         if path == "/":
+            # "/" is content-negotiated (HTML for browsers, JSON for agents),
+            # so BOTH representations must send `Vary: Accept` — without it
+            # an edge cache (Cloudflare, max-age=300) serves whichever
+            # representation warmed the PoP first to every client for the
+            # TTL, Accept header ignored (observed live, 2026-08-12 audit).
             if "text/html" in (self.headers.get("Accept") or ""):
                 body = LANDING_HTML.encode()
                 self.send_response(200)
@@ -1971,11 +2047,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Cache-Control", "public, max-age=300")
+                self.send_header("Vary", "Accept")
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(body)
                 return
-            return self._send(200, INDEX)
+            return self._send(200, INDEX, {"Vary": "Accept"})
         if path == "/v1/trust/evaluate":
             # A human clicking the gate link (or an agent probing with GET)
             # must get USAGE, not the paid lane's 402 — this route is POST-only
@@ -2050,6 +2127,12 @@ class Handler(BaseHTTPRequestHandler):
             # #2300 commitment #3: canonical crawler-UA registry, same
             # no-auth/cached style as the other /.well-known/ routes above.
             return self._send(200, CRAWLERS)
+        if path.startswith("/.well-known/"):
+            # any OTHER well-known probe gets an honest 404 — before this,
+            # unknown discovery paths fell through to the paid lane's 401
+            # ("invalid or missing API key"), telling a stranger a
+            # nonexistent file required payment (2026-08-12 audit)
+            return self._send(404, {"error": "not found"})
         if path == "/v1/spec":
             # Field-level schema for x402-trust-query-v0.1 (request) and
             # x402-trust-evaluation-v0.1 (response) — hand-written, not
@@ -2261,27 +2344,55 @@ class Handler(BaseHTTPRequestHandler):
         method = msg.get("method") or ""
         mid = msg.get("id")
         if method.startswith("notifications/"):
+            # notifications/initialized is the signal a client finished the
+            # full handshake — worth a meter line. Every other notification
+            # (cancelled, progress, ...) stays unmetered: high-volume, no
+            # signal.
+            if method == "notifications/initialized":
+                _meter(ident, "/mcp:notif:initialized", 202)
             self.send_response(202)
             self.send_header("Content-Length", "0")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             return
         if method == "initialize":
+            params = msg.get("params")
+            ci = params.get("clientInfo") if isinstance(params, dict) else None
+            parts = []
+            if isinstance(ci, dict):
+                # clientInfo is attacker-controlled input that becomes a log
+                # field — sanitize both parts before they ever touch disk.
+                if ci.get("name"):
+                    parts.append(_mcp_log_name(str(ci["name"])))
+                if ci.get("version"):
+                    parts.append(_mcp_log_name(str(ci["version"])))
+            client = "/".join(p for p in parts if p)[:60]
+            _meter(ident, f"/mcp:initialize:{client}" if client
+                   else "/mcp:initialize", 200)
             result = {"protocolVersion": MCP_PROTOCOL,
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "merona-mcp", "version": "1.1"}}
+                      "instructions": MCP_INSTRUCTIONS,
+                      "serverInfo": {"name": "merona-mcp",
+                                    "title": "merona — x402 settlement "
+                                             "index",
+                                    "version": "1.2"}}
         elif method == "tools/list":
+            _meter(ident, "/mcp:tools/list", 200)
             result = {"tools": MCP_TOOLS}
         elif method in ("resources/list", "resources/templates/list"):
             # We serve tools only, and say so in `capabilities`. Directory
             # scanners probe these anyway; -32601 is a legal answer but reads
             # as a failure in their logs, so answer empty instead of erroring.
+            _meter(ident, f"/mcp:{method}", 200)
             result = {"resources": []} if method == "resources/list" else \
                 {"resourceTemplates": []}
         elif method == "prompts/list":
+            _meter(ident, "/mcp:prompts/list", 200)
             result = {"prompts": []}
         elif method == "tools/call":
-            params = msg.get("params") or {}
+            params = msg.get("params")
+            if not isinstance(params, dict):     # scanners send lists/nulls
+                params = {}
             name = str(params.get("name") or "")
             args = params.get("arguments") or {}
             if not isinstance(args, dict):
@@ -2300,8 +2411,20 @@ class Handler(BaseHTTPRequestHandler):
                 # structured twin of the text content (spec 2025-06-18);
                 # older clients simply ignore the extra key
                 result["structuredContent"] = out
-            _meter(ident, f"/mcp:{name[:40]}", 200)
+            # metered status: 500 tool error, 402 unpaid lane answered with
+            # payment instructions (the JSON-RPC response itself is still
+            # 200) — so a paid trust_score call is distinguishable from a
+            # probe that only ever collects the paywall.
+            st = 200
+            if result["isError"]:
+                st = 500
+            elif isinstance(out, dict) and "payment_required" in out:
+                st = 402
+            _meter(ident, f"/mcp:{name[:40]}", st)
         else:
+            # method itself is attacker-controlled (same as clientInfo
+            # above) — sanitize before it hits the log.
+            _meter(ident, f"/mcp:?{_mcp_log_name(method)[:40]}", 200)
             return self._send(200, {"jsonrpc": "2.0", "id": mid,
                                     "error": {"code": -32601,
                                               "message": "method not found"}},
@@ -2318,6 +2441,21 @@ class Handler(BaseHTTPRequestHandler):
 # 2025-06-18: the spec revision that added tool outputSchema +
 # structuredContent, both of which we now serve
 MCP_PROTOCOL = "2025-06-18"
+# Injected into model context by clients that honor `instructions`
+# (spec 2025-06-18). Factual only — no pitch, the tools speak for themselves.
+MCP_INSTRUCTIONS = (
+    "merona is an independent x402 settlement index — it does not run "
+    "payment rails and holds no seller relationships.\n"
+    "Three tools are free, no API key or signup required: payto_check "
+    "checks one wallet or endpoint's payout integrity before you pay it; "
+    "mismatch_feed lists the current payout mismatches (top 10; full feed "
+    "at merona.io/mismatches.json); "
+    "clean_stats reports wash-adjusted settlement volume per chain.\n"
+    f"trust_score is paid (${x402pay.PRICE_USD:g} per call, via x402 "
+    "payment or an API key) and returns a wash-aware seller grade with a "
+    "re-derivable snapshot hash.\n"
+    "Call the free tools freely — no auth handshake needed."
+)
 MCP_TOOLS = [
     {"name": "payto_check",
      "description": "Check whether an x402 endpoint or wallet pays out where "
@@ -2351,13 +2489,14 @@ MCP_TOOLS = [
              "error": {"type": "string",
                        "description": "Present only on backend failure."}}}},
     {"name": "mismatch_feed",
-     "description": "List every x402 endpoint currently advertising one "
-                    "payout address while asking payers for another, from "
-                    "merona's nightly probe of the public catalog. Returns "
-                    "the current entries with advertised vs live addresses, "
-                    "counts and as-of dates. Takes no arguments. Free, no "
-                    "key. Use payto_check instead when you already have a "
-                    "specific address or endpoint to check.",
+     "description": "List x402 endpoints currently advertising one payout "
+                    "address while asking payers for another, from merona's "
+                    "nightly probe of the public catalog — the top 10 "
+                    "entries with advertised vs live addresses, full counts "
+                    "and as-of dates (complete feed, uncapped: "
+                    "merona.io/mismatches.json). Takes no arguments. Free, "
+                    "no key. Use payto_check instead when you already have "
+                    "a specific address or endpoint to check.",
      "annotations": {"title": "payTo mismatch feed", "readOnlyHint": True,
                      "destructiveHint": False, "idempotentHint": True,
                      "openWorldHint": False},
@@ -2609,12 +2748,23 @@ CRAWLERS = {
                     "that need notifying (402 body, /.well-known/"
                     "security.txt, landing page) — read-only, never writes",
          "pays": False, "source": "attest/contact_harvest.py"},
+        # The x402-audit-indexer family: the registry lists each EXACT
+        # literal a log would show, not just the shared prefix — the whole
+        # point is that an operator greps their access log and finds the
+        # verbatim string here (2026-08-12 audit: the two suffixed variants
+        # were previously uncited and the bare form cited the wrong file).
         {"ua": "x402-audit-indexer/1.0",
-         "purpose": "default UA for the Base/Solana chain-read clients "
-                    "(indexer/chain.py, indexer/solana_chain.py) — mostly "
-                    "hits RPC, but the identical prefix is what "
-                    "reconciliation/surplus-validation below extend",
+         "purpose": "default UA for the Base/Solana chain-read clients — "
+                    "hits RPC providers, not sellers",
+         "pays": False, "source": "indexer/chain.py"},
+        {"ua": "x402-audit-indexer/1.0 (reconciliation)",
+         "purpose": "daily cross-tracker reconciliation fetches of "
+                    "x402scan's public pages — read-only",
          "pays": False, "source": "indexer/reconcile.py"},
+        {"ua": "x402-audit-indexer/1.0 (surplus-validation)",
+         "purpose": "spot-validation of surplus settlement attribution "
+                    "against x402scan's public pages — read-only",
+         "pays": False, "source": "indexer/validate_surplus.py"},
         {"ua": "x402-index-recon/1.0 (+daily reconciliation)",
          "purpose": "daily cross-tracker reconciliation against x402scan's "
                     "public pages (reachability + best-effort headline "

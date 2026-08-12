@@ -231,13 +231,22 @@ class _StoreBase:
                   measured_at   TEXT NOT NULL,
                   PRIMARY KEY (measured_date, domain)
                 )""",
-            # Full nightly Bazaar census — one compact row per listed resource.
-            # Doubles as the PRICE BOOK (asked price per resource per day; the
-            # price index of the agentic economy) and the churn record
-            # (arrivals/departures via date-over-date diff).
-            """CREATE TABLE IF NOT EXISTS bazaar_census (
+            # Full nightly Bazaar census — one row per ACCEPTS LEG of a listed
+            # resource (accept_index distinguishes legs; a resource offering N
+            # payment options in `accepts` gets N rows). Doubles as the PRICE
+            # BOOK (asked price per resource per day; the price index of the
+            # agentic economy) and the churn record (arrivals/departures via
+            # date-over-date diff).
+            # Audit fix: this table used to be PK(measured_date, resource) —
+            # one row per resource, keeping only accepts[0] — so the catalog
+            # side of the payTo-mismatch feed (payto_watch.py) could never see
+            # legs 2..N of a multi-chain listing (25% of the catalog has 2+
+            # accepts). See _migrate_bazaar_census() below for the in-place
+            # migration of a table created under the old PK.
+            f"""CREATE TABLE IF NOT EXISTS bazaar_census (
                   measured_date TEXT NOT NULL,
                   resource      TEXT NOT NULL,
+                  accept_index  {self.BIGINT} NOT NULL DEFAULT 0,
                   domain        TEXT,
                   network       TEXT,
                   asset         TEXT,
@@ -245,7 +254,7 @@ class _StoreBase:
                   amount_usd    REAL,
                   seller_wallet TEXT,
                   service       TEXT,
-                  PRIMARY KEY (measured_date, resource)
+                  PRIMARY KEY (measured_date, resource, accept_index)
                 )""",
             # Cross-tracker reconciliation — other trackers' headline numbers
             # recorded daily next to ours; divergence is report material, and
@@ -407,10 +416,60 @@ class _StoreBase:
                 )""",
         ]
 
+    def _table_columns(self, table: str) -> set[str]:
+        """Column names of an existing table (empty set if it doesn't exist
+        yet — CREATE TABLE IF NOT EXISTS runs before this is ever consulted,
+        so that only happens pre-first-run). Portable across both backends."""
+        if self.PH == "?":  # sqlite
+            return {r[1] for r in
+                    self.db.execute(f"PRAGMA table_info({table})").fetchall()}
+        cur = self.db.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name=%s", (table,))
+        return {r[0] for r in cur.fetchall()}
+
+    def _migrate_bazaar_census(self) -> None:
+        """bazaar_census used to be PRIMARY KEY(measured_date, resource) — one
+        row per catalog resource (accepts[0] only). It's now one row per
+        ACCEPTS LEG, PRIMARY KEY(measured_date, resource, accept_index). A
+        table already created under the old PK is migrated in place; a fresh
+        table already gets the new schema from _schema_statements() above, so
+        this is a no-op there (detected via the accept_index column). Idempotent
+        — safe to call on every open_store().
+        """
+        if "accept_index" in self._table_columns("bazaar_census"):
+            return
+        cur = self.db.cursor()
+        if self.PH == "?":  # SQLite has no ALTER ... DROP/ADD PRIMARY KEY —
+            # rebuild: rename, recreate under the new schema, copy, drop.
+            cur.execute("ALTER TABLE bazaar_census RENAME TO bazaar_census_old")
+            for stmt in self._schema_statements():
+                if "CREATE TABLE" in stmt and "bazaar_census" in stmt \
+                        and "bazaar_census_old" not in stmt:
+                    cur.execute(stmt)
+            cur.execute(
+                "INSERT INTO bazaar_census(measured_date,resource,accept_index,"
+                "domain,network,asset,amount_raw,amount_usd,seller_wallet,"
+                "service) SELECT measured_date,resource,0,domain,network,asset,"
+                "amount_raw,amount_usd,seller_wallet,service "
+                "FROM bazaar_census_old")
+            cur.execute("DROP TABLE bazaar_census_old")
+        else:  # Postgres: ADD COLUMN, then swap the PK constraint in place —
+            # both are ops the table-owning writer role already has (it did
+            # CREATE TABLE), no extra privilege needed.
+            cur.execute("ALTER TABLE bazaar_census ADD COLUMN accept_index "
+                        f"{self.BIGINT} NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE bazaar_census DROP CONSTRAINT "
+                        "bazaar_census_pkey")
+            cur.execute("ALTER TABLE bazaar_census ADD PRIMARY KEY "
+                        "(measured_date, resource, accept_index)")
+        self.db.commit()
+
     def _init_schema(self) -> None:
         cur = self.db.cursor()
         for stmt in self._schema_statements():
             cur.execute(stmt)
+        self._migrate_bazaar_census()
         row = cur.execute(
             "SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is None:
@@ -689,20 +748,24 @@ class _StoreBase:
         self.db.commit()
 
     def record_bazaar_census_rows(self, measured_date: str, rows: list[dict]) -> int:
-        """Batch-insert the day's full Bazaar census (one row per resource).
-        Idempotent: re-runs upsert. Single commit — ~25k rows/night."""
+        """Batch-insert the day's full Bazaar census — one row per ACCEPTS LEG
+        (accept_index defaults to 0 for a single-leg resource, distinguishes
+        legs 1..N-1 for a multi-leg one). Idempotent: re-runs upsert on
+        (date, resource, accept_index). Single commit — ~25k+ rows/night."""
         cur = self.db.cursor()
         for r in rows:
             cur.execute(
-                self.q("INSERT INTO bazaar_census(measured_date,resource,domain,"
-                       "network,asset,amount_raw,amount_usd,seller_wallet,service) "
-                       "VALUES(?,?,?,?,?,?,?,?,?) "
-                       "ON CONFLICT(measured_date,resource) DO UPDATE SET "
-                       "network=excluded.network,asset=excluded.asset,"
-                       "amount_raw=excluded.amount_raw,amount_usd=excluded.amount_usd,"
+                self.q("INSERT INTO bazaar_census(measured_date,resource,"
+                       "accept_index,domain,network,asset,amount_raw,amount_usd,"
+                       "seller_wallet,service) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                       "ON CONFLICT(measured_date,resource,accept_index) DO UPDATE SET "
+                       "domain=excluded.domain,network=excluded.network,"
+                       "asset=excluded.asset,amount_raw=excluded.amount_raw,"
+                       "amount_usd=excluded.amount_usd,"
                        "seller_wallet=excluded.seller_wallet,service=excluded.service"),
-                (measured_date, r["resource"], r.get("domain"), r.get("network"),
-                 r.get("asset"), r.get("amount_raw"), r.get("amount_usd"),
+                (measured_date, r["resource"], r.get("accept_index", 0),
+                 r.get("domain"), r.get("network"), r.get("asset"),
+                 r.get("amount_raw"), r.get("amount_usd"),
                  r.get("seller_wallet"), r.get("service")))
         self.db.commit()
         return len(rows)

@@ -385,24 +385,38 @@ def compute_seller_scores(store, date: str) -> int:
     signals_live = {"wash_signals": wash_date, "recip_scan_ok": recip_ok,
                     "cycles": cycle_date}
 
-    # instrumentation joins: seller wallet -> listed origins / domains
+    # instrumentation joins: (chain, seller wallet) -> listed origins /
+    # domains. Keyed per chain (2026-08-12 audit): keying by wallet alone
+    # let an address's Base listing leak its endpoint grade and domain age
+    # into the SAME address's Polygon score — two economically independent
+    # sellers sharing evidence because EVM keys work on every chain. The
+    # census names networks inconsistently ('base' vs 'eip155:8453'), so
+    # labels map to chain names via payto_watch's canonicalizer; a network
+    # we can't map lands under chain None — a wildcard bucket consulted
+    # only when the scored chain has no evidence of its own.
+    from payto_watch import _canon_net
+    canon_to_chain = {"eip155:8453": "base", "eip155:137": "polygon",
+                      "solana": "solana", "eip155:42161": "arbitrum",
+                      "eip155:10": "optimism", "eip155:43114": "avalanche"}
     wallet_origins: dict = {}
     wallet_domains: dict = {}
     try:
         d = store.db.execute(
             "SELECT MAX(measured_date) FROM bazaar_census").fetchone()[0]
         if d:
-            for res, dom, wallet in store.db.execute(store.q(
-                    "SELECT resource, domain, seller_wallet FROM bazaar_census "
+            for res, dom, wallet, net in store.db.execute(store.q(
+                    "SELECT resource, domain, seller_wallet, network "
+                    "FROM bazaar_census "
                     "WHERE measured_date=? AND seller_wallet IS NOT NULL"), (d,)):
-                w = (wallet or "").lower()
+                key = (canon_to_chain.get(_canon_net(net)),
+                       (wallet or "").lower())
                 from urllib.parse import urlparse
                 p = urlparse(res)
                 if p.hostname:
-                    wallet_origins.setdefault(w, set()).add(
+                    wallet_origins.setdefault(key, set()).add(
                         f"{p.scheme}://{p.netloc}")
                 if dom:
-                    wallet_domains.setdefault(w, set()).add(dom)
+                    wallet_domains.setdefault(key, set()).add(dom)
     except Exception:
         pass
     # endpoint grades (latest scoring run today) + domain ages
@@ -467,7 +481,8 @@ def compute_seller_scores(store, date: str) -> int:
             longevity = min(8.0, days_active / 30 * 8)               # 30d -> max
             # endpoint health (0-25)
             w = seller.lower()
-            origins = wallet_origins.get(w) or set()
+            origins = (wallet_origins.get((chain, w))
+                       or wallet_origins.get((None, w)) or set())
             if origins:
                 best = max((origin_score.get(o, 0) for o in origins), default=0)
                 endpoint = 25 * best / 100
@@ -475,7 +490,8 @@ def compute_seller_scores(store, date: str) -> int:
             else:
                 endpoint, listed = 10.0, False                       # unlisted: neutral
             # domain age (0-20)
-            doms = wallet_domains.get(w) or set()
+            doms = (wallet_domains.get((chain, w))
+                    or wallet_domains.get((None, w)) or set())
             ages = [domain_age[d] for d in doms if d in domain_age]
             if ages:
                 a = max(ages)

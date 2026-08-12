@@ -146,6 +146,15 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     assert b"m.Score API" in r.read()
     s, b, _ = _req("/")
     assert s == 200 and b["service"] == "m.Score API"
+    # "/" is content-negotiated, so both representations must Vary: Accept —
+    # without it an edge cache serves whichever representation warmed the
+    # PoP first to everyone (observed live behind Cloudflare, 2026-08-12)
+    assert r.headers.get("Vary") == "Accept"          # HTML branch above
+    _s2, _b2, h2 = _req("/")
+    assert h2.get("Vary") == "Accept"                 # JSON branch
+    # unknown /.well-known/ probes: honest 404, not the paid lane's 401
+    s, b, _ = _req("/.well-known/does-not-exist.json")
+    assert s == 404 and b == {"error": "not found"}
 
     # manifest + handshake
     s, b, _ = _req("/mcp.json")
@@ -161,6 +170,12 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
 
     s, b, _ = _mcp("initialize")
     assert s == 200 and b["result"]["serverInfo"]["name"] == "merona-mcp"
+    # storefront: instructions + title tell a connecting client what's here
+    assert "merona" in b["result"]["instructions"]
+    assert "trust_score" in b["result"]["instructions"]
+    assert b["result"]["serverInfo"]["title"] == \
+        "merona — x402 settlement index"
+    assert b["result"]["serverInfo"]["version"] == "1.2"
     s, b, _ = _mcp("tools/list")
     assert len(b["result"]["tools"]) == 4
 
@@ -176,6 +191,35 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     # genuinely unknown methods must still be rejected, not silently emptied
     s, b, _ = _mcp("does/not/exist")
     assert s == 200 and b["error"]["code"] == -32601
+
+    # initialize with a clientInfo, incl. an attacker-controlled name that
+    # must never survive raw into the usage log
+    s, b, _ = _mcp("initialize", {"clientInfo": {"name": "claude-ai",
+                                                 "version": "1.0"}})
+    assert s == 200
+    s, b, _ = _mcp("initialize", {"clientInfo": {
+        "name": "evil<script>\n;rm -rf /", "version": "../../etc"}})
+    assert s == 200
+    # malformed params must not crash the handler thread: scanners send
+    # params as a list/null, where .get() would raise before the guard
+    s, b, _ = _mcp("initialize", [1, 2])
+    assert s == 200 and "instructions" in b["result"]
+    s, b, _ = _mcp("tools/call", [1, 2])
+    assert s == 200 and b["result"]["isError"] is True
+    # only notifications/initialized is metered; other notifications aren't.
+    # 202 responses have an empty body, so post raw rather than via _mcp/_req
+    # (both of those json-decode the response).
+    def _notify(method):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{PORT}/mcp", method="POST",
+            data=json.dumps({"jsonrpc": "2.0", "method": method}).encode())
+        req.add_header("Content-Type", "application/json")
+        return urllib.request.urlopen(req, timeout=5).status
+    assert _notify("notifications/initialized") == 202
+    assert _notify("notifications/cancelled") == 202
+    # a failing tool call must meter 500, not 200 — response body untouched
+    s, b, _ = _mcp("tools/call", {"name": "no-such-tool", "arguments": {}})
+    assert s == 200 and b["result"]["isError"] is True
 
     # free tools
     out = _tool("payto_check", {"query": "api.x.example"})
@@ -225,6 +269,16 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
         assert code == 401, junk
     code, _b, _h = _req("/v1/nope")
     assert code == 401
+    # /mcp parse-error (400) and body-too-large (413) are scanner noise too
+    # — confirm they stay unmetered, same as the junk-path probes above
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/mcp",
+                                 method="POST", data=b"not json")
+    req.add_header("Content-Type", "application/json")
+    try:
+        code = urllib.request.urlopen(req, timeout=5).status
+    except urllib.error.HTTPError as e:
+        code = e.code
+    assert code == 400
     # the response is sent BEFORE the meter line is appended — give the
     # handler thread a beat so the read below isn't racing the write
     time.sleep(0.3)
@@ -237,6 +291,34 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
     # the paid + MCP lanes still land in the log, tool-name resolved
     assert any(p.startswith("/mcp:") for p in logged), logged
     assert any(r["id"].startswith("x402:") for r in usage)
+
+    # the whole MCP surface is now metered, not just tools/call
+    assert "/mcp:initialize:claude-ai/1.0" in logged
+    assert "/mcp:tools/list" in logged
+    assert "/mcp:resources/list" in logged
+    assert "/mcp:resources/templates/list" in logged
+    assert "/mcp:prompts/list" in logged
+    assert "/mcp:notif:initialized" in logged
+    # ...but only that one notification type — cancelled stays unmetered
+    assert not any("cancelled" in p for p in logged)
+    # unknown-method path is logged, sanitized, capped
+    assert any(p.startswith("/mcp:?does/not/exist") for p in logged)
+    # attacker-controlled clientInfo never leaks unsafe characters through
+    # (space/hyphen/dot/slash are allowed by design, so only the actual
+    # injection-shaped characters are checked here)
+    assert not any(c in p for p in logged for c in "<>;\n")
+    # tool-call status reflects outcome: success 200, isError 500 — and the
+    # JSON-RPC response body itself is untouched either way (checked above)
+    by_path_status = {(r["path"], r["status"]) for r in usage}
+    assert ("/mcp:no-such-tool", 500) in by_path_status
+    assert ("/mcp:payto_check", 200) in by_path_status
+    # trust_score: the api-keyed (served) call meters 200; the unpaid call
+    # that only collected payment instructions meters 402 — "first real
+    # dollar" must be distinguishable from paywall lookers in the log
+    assert ("/mcp:trust_score", 200) in by_path_status
+    assert ("/mcp:trust_score", 402) in by_path_status
+    # the parse-error probe above never made it into the log at all
+    assert not any(r["status"] == 400 for r in usage)
 
 
 def test_unreadable_keys_file_degrades_instead_of_crashing(tmp_path,

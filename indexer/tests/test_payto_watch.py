@@ -182,3 +182,157 @@ def test_probe_records_live_offers(tmp_path, monkeypatch):
     ok = s.db.execute("SELECT valid_402 FROM endpoint_liveness").fetchone()[0]
     assert bool(ok)
     s.close()
+
+
+# --- per-network comparison (false-negative report by @chikop2p, 2026-08-11) --
+
+INS_C = ("INSERT INTO bazaar_census(measured_date,resource,domain,network,"
+         "seller_wallet) VALUES(?,?,?,?,?)")
+D = "2026-08-11"
+A, B, X = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "ee" * 20
+
+
+def _feed(s):
+    s.db.commit()
+    return payto_watch.compute_feed(s)
+
+
+def test_cross_network_mask_is_flagged(tmp_path):
+    """THE reported bug: live payTos were unioned across networks, so a
+    correct Polygon leg masked a mismatched Base leg. Catalog: Base pays A.
+    Live: Base asks X (mismatch!), Polygon asks A. The union {X, A} contains
+    A, so the old code stayed silent; per-network comparison must flag the
+    Base leg."""
+    s = Store(tmp_path / "t.sqlite")
+    url = "https://api.mask.example/v1"
+    s.db.execute(INS_C, (D, url, "mask.example", "eip155:8453", A))
+    s.record_live_offer(D, url, {"payto": X, "network": "eip155:8453"}, "t")
+    s.record_live_offer(D, url, {"payto": A, "network": "eip155:137"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert [e["resource"] for e in cvl] == [url]
+    assert cvl[0]["advertised_payto"] == A
+    assert cvl[0]["live_paytos"] == [X]           # the Base leg only
+    s.close()
+
+
+def test_flag_isolates_the_offending_leg(tmp_path):
+    """Precision: catalog advertises Polygon->B; live serves a Base leg
+    (uncatalogued, not a mismatch) and a Polygon leg asking X. The flag
+    must carry ONLY the Polygon leg's payTo — the old union reported every
+    chain's wallets as 'live asks', muddying the entry."""
+    s = Store(tmp_path / "t.sqlite")
+    url = "https://api.multi.example/v1"
+    s.db.execute(INS_C, (D, url, "multi.example", "eip155:137", B))
+    s.record_live_offer(D, url, {"payto": A, "network": "eip155:8453"}, "t")
+    s.record_live_offer(D, url, {"payto": X, "network": "eip155:137"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert len(cvl) == 1
+    assert cvl[0]["advertised_payto"] == B
+    assert cvl[0]["live_paytos"] == [X]
+    assert cvl[0]["live_network"] == "eip155:137"
+    s.close()
+
+
+def test_network_alias_pairs_base_with_caip2(tmp_path):
+    """The committed census names the same chain both 'base' and
+    'eip155:8453'; the two sides must canonicalize before pairing or naming
+    drift silently unpairs them. Same wallet under different labels: no
+    flag. Different wallet: flag."""
+    s = Store(tmp_path / "t.sqlite")
+    ok, bad = "https://api.alias-ok.example/v1", "https://api.alias-bad.example/v1"
+    s.db.execute(INS_C, (D, ok, "alias-ok.example", "base", A))
+    s.record_live_offer(D, ok, {"payto": A, "network": "eip155:8453"}, "t")
+    s.db.execute(INS_C, (D, bad, "alias-bad.example", "base", A))
+    s.record_live_offer(D, bad, {"payto": X, "network": "eip155:8453"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert [e["resource"] for e in cvl] == [bad]
+    s.close()
+
+
+def test_advertised_chain_unprobed_falls_back_to_union(tmp_path):
+    """Catalog advertises Polygon->B but the probe only captured a Base
+    leg asking A. There is no same-network pair, so the legacy union
+    comparison applies and the divergence is still surfaced (recorded fact
+    with both networks named — the disclaimer does the judging), rather
+    than dropped."""
+    s = Store(tmp_path / "t.sqlite")
+    url = "https://api.perchain.example/v1"
+    s.db.execute(INS_C, (D, url, "perchain.example", "eip155:137", B))
+    s.record_live_offer(D, url, {"payto": A, "network": "eip155:8453"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert len(cvl) == 1
+    assert cvl[0]["advertised_payto"] == B
+    assert cvl[0]["advertised_network"] == "eip155:137"
+    assert cvl[0]["live_paytos"] == [A]
+    s.close()
+
+
+def test_unpairable_network_falls_back_to_union(tmp_path):
+    """A naming scheme _canon_net doesn't know must degrade to the legacy
+    resource-level union comparison (one entry per URL), not to silence."""
+    s = Store(tmp_path / "t.sqlite")
+    url = "https://api.exotic.example/v1"
+    s.db.execute(INS_C, (D, url, "exotic.example", "weirdnet-v9", A))
+    s.record_live_offer(D, url, {"payto": X, "network": "weirdnet-vTEN"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert [e["resource"] for e in cvl] == [url]
+    assert cvl[0]["advertised_payto"] == A and cvl[0]["live_paytos"] == [X]
+    s.close()
+
+
+# --- multi-leg census (audit fix: accepts[0]-only blinded the catalog side) --
+# bazaar_census went from one row per resource (accepts[0] only) to one row
+# per accepts LEG (PK measured_date,resource,accept_index). These pin the
+# false-negative it closed, and the rotation false-positive that multi-leg
+# census would otherwise open.
+
+INS_LEG = ("INSERT INTO bazaar_census(measured_date,resource,accept_index,"
+          "domain,network,seller_wallet) VALUES(?,?,?,?,?,?)")
+
+
+def test_second_census_leg_mismatch_is_caught(tmp_path):
+    """THE catalog-side false negative this fix closes: a resource lists TWO
+    legs (Base->A, Polygon->B). Live Base asks A (fine); live Polygon asks X
+    (a payTo swap). Under the old accepts[0]-only census, the Polygon leg
+    was never recorded at all, so this mismatch was structurally
+    undetectable. It must now be flagged, isolated to the Polygon leg."""
+    s = Store(tmp_path / "t.sqlite")
+    url = "https://api.twoleg.example/v1"
+    s.db.execute(INS_LEG, (D, url, 0, "twoleg.example", "eip155:8453", A))
+    s.db.execute(INS_LEG, (D, url, 1, "twoleg.example", "eip155:137", B))
+    s.record_live_offer(D, url, {"payto": A, "network": "eip155:8453"}, "t")
+    s.record_live_offer(D, url, {"payto": X, "network": "eip155:137"}, "t")
+    cvl = _feed(s)["catalog_vs_live"]
+    assert len(cvl) == 1
+    assert cvl[0]["advertised_payto"] == B
+    assert cvl[0]["advertised_network"] == "eip155:137"
+    assert cvl[0]["live_network"] == "eip155:137"
+    assert cvl[0]["live_paytos"] == [X]
+    s.close()
+
+
+def test_rotation_is_keyed_per_network_not_per_resource(tmp_path):
+    """A resource legitimately advertising a DIFFERENT wallet per chain
+    (Base->A, Polygon->B, unchanged across two census dates) must NOT read
+    as a payTo rotation — that would be a false accusation on a public
+    feed. A genuine same-network change (Base: A -> A2) must still be
+    caught, with the network labeled on the entry."""
+    s = Store(tmp_path / "t.sqlite")
+    static_url = "https://api.static-multichain.example/v1"
+    for d in ("2026-08-10", "2026-08-11"):
+        s.db.execute(INS_LEG, (d, static_url, 0, "x", "eip155:8453", A))
+        s.db.execute(INS_LEG, (d, static_url, 1, "x", "eip155:137", B))
+
+    rotated_url = "https://api.real-rotation.example/v1"
+    A2 = "0x" + "cc" * 20
+    s.db.execute(INS_LEG, ("2026-08-10", rotated_url, 0, "y", "eip155:8453", A))
+    s.db.execute(INS_LEG, ("2026-08-11", rotated_url, 0, "y", "eip155:8453", A2))
+
+    rot = _feed(s)["payto_rotation"]
+    resources = {r["resource"] for r in rot}
+    assert static_url not in resources           # per-net wallets: not a rotation
+    assert rotated_url in resources               # real same-network change: caught
+    entry = next(r for r in rot if r["resource"] == rotated_url)
+    assert entry["network"] == "eip155:8453"
+    assert [t["payto"] for t in entry["timeline"]] == [A, A2]
+    s.close()
