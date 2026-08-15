@@ -1,0 +1,4 @@
+{
+  "_note": "Facilitator SELF-DECLARATIONS, verified by relayer-key signature — see registrar/SELF-DECLARATION.md. Same shape as relayer_registry_curated.json; the _declaration block stores the signatures so every entry stays independently re-verifiable. NEVER merge an entry without running indexer/verify_declaration.py on it AND confirming real x402 facilitation activity.",
+  "facilitators": {}
+}

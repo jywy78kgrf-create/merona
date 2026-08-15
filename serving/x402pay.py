@@ -34,7 +34,10 @@ import requests
 PAYTO = (os.environ.get("X402_PAYTO") or "").strip().lower() or None
 FACILITATOR = os.environ.get("X402_FACILITATOR",
                              "https://x402.org/facilitator").rstrip("/")
-PRICE_USD = float(os.environ.get("X402_PRICE_USD", "0.005"))
+# Nominal since 2026-08-15: the paid lane is an OPTIONAL receipts path (the
+# tools serve free by default) — priced at dust so merona stays a functioning
+# x402 seller on the rails it audits, not as a revenue gate.
+PRICE_USD = float(os.environ.get("X402_PRICE_USD", "0.001"))
 NETWORK = os.environ.get("X402_NETWORK", "base")
 # native USDC on Base (6 decimals)
 ASSET = os.environ.get(

@@ -46,15 +46,24 @@ def alog(tx, authorizer, block):
 
 
 class FakeClient:
-    def __init__(self, head, logs, tx_from, fail=False):
+    def __init__(self, head, logs, tx_from, fail=False, max_window=None):
         self.head, self.logs, self.tx_from, self.fail = head, logs, tx_from, fail
+        # max_window: reproduces the real "Response is too big" RPC error —
+        # any get_logs_chunked call spanning more than this many blocks fails,
+        # regardless of `fail`. Used to prove the cap actually keeps the
+        # requested range small enough for the RPC to answer.
+        self.max_window = max_window
+        self.calls = []   # records (from_block, to_block) of every call
 
     def block_number(self): return self.head
     def finalized_block(self): return self.head
 
     def get_logs_chunked(self, *, address, topics, from_block, to_block):
+        self.calls.append((from_block, to_block))
         if self.fail:
             raise RpcError("boom")
+        if self.max_window is not None and (to_block - from_block + 1) > self.max_window:
+            raise RpcError("Response is too big")
         for lg in self.logs:
             b = int(lg["blockNumber"], 16)
             if (from_block <= b <= to_block
@@ -176,6 +185,87 @@ def _put_settlement(s, block, facilitator, i):
                        "1", block, 1700000000, facilitator))
 
 
+def test_stale_baseline_caps_the_window_and_still_produces_a_number(
+        tmp_path, monkeypatch):
+    """The Base incident, reproduced: the published anchor is frozen far
+    below the store head. count_window over the full [anchor, head] range
+    would ask the RPC for every USDC transfer across ~900 blocks and (per
+    max_window) get "Response is too big" back — exactly what happened live
+    on Base over its real ~71k-block gap. With the cap in place, tick()
+    counts only the most recent PULSE_MAX_WINDOW_BLOCKS blocks instead, so
+    the RPC call stays inside a range it can answer and the chain produces a
+    live number rather than erroring forever."""
+    s = setup(tmp_path, monkeypatch, anchor=100)
+    monkeypatch.setattr(live_pulse, "PULSE_MAX_WINDOW_BLOCKS", 50)
+    logs = [
+        alog("0xold", PAYER, 105),                  # inside the full gap,
+        tlog("0xold", PAYER, SELLER, 105),           # OUTSIDE the capped
+                                                      # window -> must NOT count
+        alog("0xnew", PAYER, 960),                   # inside [951, 1000]:
+        tlog("0xnew", PAYER, SELLER, 960),           # the capped window
+    ]
+    cl = FakeClient(1000, logs, {"0xold": RELAYER, "0xnew": RELAYER},
+                    max_window=50)   # any call over 50 blocks -> RpcError
+    state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert "error" not in b                    # no "rpc window failed"
+    assert b["scoped_delta"] == 1               # only the recent-window tx
+    assert b["superset_delta"] == 1
+    assert b["window_capped"] is True
+    assert b["window_blocks"] == 50
+    assert b["baseline_stale"] is True
+    assert b["cursor"] == 1000 and b["behind"] == 0 and b["anchor"] == 100
+    # every RPC call was bounded to the trailing window, never [anchor, head]
+    for (lo, hi) in cl.calls:
+        assert lo == 951 and hi == 1000
+        assert hi - lo + 1 == 50
+
+
+def test_window_within_cap_is_byte_for_byte_unchanged(tmp_path, monkeypatch):
+    """When the gap from anchor to head is within PULSE_MAX_WINDOW_BLOCKS,
+    behavior (and state shape) must be identical to before the cap existed:
+    the full [anchor, head] window, a cumulative delta, and no capped
+    markers."""
+    s = setup(tmp_path, monkeypatch, anchor=100)
+    monkeypatch.setattr(live_pulse, "PULSE_MAX_WINDOW_BLOCKS", 5000)
+    logs = [alog("0xa1", PAYER, 105), tlog("0xa1", PAYER, SELLER, 105)]
+    cl = FakeClient(110, logs, {"0xa1": RELAYER})
+    state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert b["scoped_delta"] == 1 and b["cursor"] == 110 and b["behind"] == 0
+    assert "window_capped" not in b
+    assert "window_blocks" not in b
+    assert "baseline_stale" not in b
+    assert cl.calls and cl.calls[0] == (101, 110)   # full since-anchor range
+
+
+def test_capped_state_is_what_the_server_serves_honestly(tmp_path, monkeypatch):
+    """serving/stats_server.py's /live.json handler serves live_pulse.json
+    verbatim (no reshaping) — so the JSON round-tripped through
+    _write_state/_load_state IS the shape the dashboard reads. Confirm the
+    capped chain's serialized state carries the fields the dashboard needs to
+    avoid presenting a partial recent count as a complete since-baseline
+    total: window_capped (gate), scoped_delta (the bounded, honest number),
+    and window_blocks (how much of a window it actually covers)."""
+    s = setup(tmp_path, monkeypatch, anchor=100)
+    monkeypatch.setattr(live_pulse, "PULSE_MAX_WINDOW_BLOCKS", 50)
+    logs = [alog("0xnew", PAYER, 960), tlog("0xnew", PAYER, SELLER, 960)]
+    cl = FakeClient(1000, logs, {"0xnew": RELAYER}, max_window=50)
+    state_path = tmp_path / "live_pulse.json"
+    monkeypatch.setattr(live_pulse, "STATE_PATH", state_path)
+    state = live_pulse.tick(s, live_pulse._load_state(), mk_client=lambda ch: cl)
+    live_pulse._write_state(state)
+    served = json.loads(state_path.read_text())   # exactly what /live.json returns
+    b = served["base"]
+    assert b["window_capped"] is True
+    assert isinstance(b["scoped_delta"], int) and b["scoped_delta"] == 1
+    assert b["window_blocks"] == 50
+    # dashboard/index.html's pollLive() reads scoped_delta + window_capped
+    # from this exact shape and, when window_capped, holds the headline at
+    # the verified nightly baseline instead of adding a partial number to
+    # it — never inventing an overstated total.
+
+
 def test_count_gap_measures_the_pending_publish_window(tmp_path, monkeypatch):
     """The proof-of-disparity: scoped settlements already in the store above the
     PUBLISHED baseline's block — counted with the tally's own predicate. This is
@@ -196,3 +286,88 @@ def test_count_gap_measures_the_pending_publish_window(tmp_path, monkeypatch):
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_tx_budget_paces_the_cursor_without_going_amber(tmp_path, monkeypatch):
+    """The wall-clock cost of a tick is one get_transaction per candidate tx,
+    budgeted at PULSE_TX_LOOKUP_CAP. REGRESSION (the 2026-08-13 flap): the
+    old budget handling kept the most RECENT cap-many txs, marked the tick
+    window_capped (-> amber "Catching up" on the dashboard), and CLOBBERED
+    the accumulated day delta. Base runs ~4-5 candidate txs/block, so the
+    routine 900-block catch-up windows after every nightly publish sat
+    right at the 4k budget — both chains flipped amber for ~2h after every
+    publish, and any mid-day superset burst (Polygon mint spam, nothing to
+    do with x402) re-flipped them and reset the count again.
+
+    A budget overrun is pacing, not partial data. Now: classify the OLDEST
+    txs up to a whole-block cutoff, advance the cursor only that far,
+    accumulate normally, stay green — `behind` carries the remaining work
+    to the next tick, and nothing is skipped or clobbered."""
+    s = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(live_pulse, "PULSE_TX_LOOKUP_CAP", 2)
+    logs, tx_from = [], {}
+    for i, blk in enumerate((104, 105, 106)):     # 3 txs > budget of 2
+        tx = f"0xt{i}"
+        logs += [alog(tx, PAYER, blk), tlog(tx, PAYER, SELLER, blk)]
+        tx_from[tx] = RELAYER
+    cl = FakeClient(110, logs, tx_from)
+    state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert "window_capped" not in b               # budget != incident: green
+    assert "baseline_stale" not in b
+    assert b["scoped_delta"] == 2                 # oldest 2 (blocks 104, 105)
+    assert b["cursor"] == 105                     # only fully-counted blocks
+    assert b["behind"] == 5                       # remaining work is visible
+    assert "error" not in b
+    # next tick picks up exactly where the budget stopped: nothing skipped,
+    # nothing double-counted, and the delta ACCUMULATES instead of resetting
+    state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert b["scoped_delta"] == 3                 # 2 + the deferred block-106 tx
+    assert b["cursor"] == 110 and b["behind"] == 0
+    assert "window_capped" not in b
+
+
+def test_tx_budget_cutoff_never_half_counts_a_block(tmp_path, monkeypatch):
+    """The prefix cutoff is a WHOLE-BLOCK boundary: when the budget lands
+    mid-block, every tx of the cutoff block is still classified (soft
+    budget) — otherwise the cursor would advance past a block whose txs
+    were only partially counted and the remainder would be lost forever."""
+    s = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(live_pulse, "PULSE_TX_LOOKUP_CAP", 2)
+    logs, tx_from = [], {}
+    # 3 txs all in block 105: budget of 2 lands mid-block
+    for i in range(3):
+        tx = f"0xs{i}"
+        logs += [alog(tx, PAYER, 105), tlog(tx, PAYER, SELLER, 105)]
+        tx_from[tx] = RELAYER
+    logs += [alog("0xlater", PAYER, 108), tlog("0xlater", PAYER, SELLER, 108)]
+    tx_from["0xlater"] = RELAYER
+    cl = FakeClient(110, logs, tx_from)
+    state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert b["scoped_delta"] == 3                 # ALL of block 105, soft budget
+    assert b["cursor"] == 105                     # 0xlater deferred, not lost
+    assert "window_capped" not in b
+    state = live_pulse.tick(s, state, mk_client=lambda ch: cl)
+    assert state["base"]["scoped_delta"] == 4     # 0xlater arrives next tick
+    assert state["base"]["cursor"] == 110
+
+
+def test_stale_baseline_trim_still_keeps_the_recent_slice(tmp_path, monkeypatch):
+    """Inside the stale-baseline (window_capped) branch the numbers are
+    already an explicit bounded recent-activity window, so a tx-budget
+    overrun there keeps the old most-RECENT-slice semantics — the state
+    stays amber and the delta stays a recent-window count."""
+    s = setup(tmp_path, monkeypatch, anchor=100)
+    monkeypatch.setattr(live_pulse, "PULSE_MAX_WINDOW_BLOCKS", 50)
+    monkeypatch.setattr(live_pulse, "PULSE_TX_LOOKUP_CAP", 1)
+    logs = [alog("0xn1", PAYER, 955), tlog("0xn1", PAYER, SELLER, 955),
+            alog("0xn2", PAYER, 990), tlog("0xn2", PAYER, SELLER, 990)]
+    cl = FakeClient(1000, logs, {"0xn1": RELAYER, "0xn2": RELAYER},
+                    max_window=50)
+    state = live_pulse.tick(s, {}, mk_client=lambda ch: cl)
+    b = state["base"]
+    assert b["window_capped"] is True             # still the incident state
+    assert b["scoped_delta"] == 1                 # the most recent tx (990)
+    assert b["cursor"] == 1000

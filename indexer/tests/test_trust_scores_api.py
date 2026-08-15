@@ -99,7 +99,12 @@ def test_score_v2_and_trust_api(tmp_path, monkeypatch):
 
     assert _get("/")[0] == 200
     assert _get("/v1/health")[0] == 200
-    assert _get(f"/v1/trust/base/{ADDR_CLEAN}")[0] == 401       # no key
+    # free-for-now default (2026-08-15): no key -> served, not 401
+    s, b = _get(f"/v1/trust/base/{ADDR_CLEAN}")
+    assert s == 200 and b["grade"]
+    assert b["pricing"] == "free — no key, no signup."
+    monkeypatch.setattr(trust_api, "FREE_MODE", False)
+    assert _get(f"/v1/trust/base/{ADDR_CLEAN}")[0] == 401       # hard gate
     s, b = _get(f"/v1/trust/base/{ADDR_CLEAN}", "sk_test_abc")
     assert s == 200 and b["grade"] and b["score_version"] == 4
     assert b["verification"]["snapshot_sha256"]                 # provable

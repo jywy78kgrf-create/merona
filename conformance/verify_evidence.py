@@ -574,12 +574,21 @@ def verify(evidence_sha256: str, snapshot_date: str,
         return steps, False
     attested_at = datetime.fromtimestamp(chosen["time"], tz=timezone.utc).isoformat()
     if revoked and not live:
-        steps.append(Step("4.eas_attestation", "WARN",
+        # A revoked attestation with no newer, live re-attestation superseding
+        # it is evidence merona ITSELF has disavowed on-chain (attest/README.md's
+        # documented revocation/correction mechanism). Reporting this as
+        # VERIFIED would make the verifier affirm evidence its own publisher
+        # retracted — the single worst failure mode for a tool whose entire
+        # pitch is "don't trust us, verify". This must FAIL (exit non-zero),
+        # not WARN-and-pass.
+        steps.append(Step("4.eas_attestation", "FAIL",
                           f"attestation {chosen['uid']} MATCHES but was "
                           f"REVOKED (revoked at unix {chosen['revocation_time']}) "
-                          f"— attest/README.md's revocation runbook requires a "
-                          f"reason + re-attestation; check for a newer, live one"))
-        return steps, True
+                          f"and no newer live re-attestation supersedes it — "
+                          f"see attest/README.md's revocation runbook (a "
+                          f"revocation requires a reason + re-attestation; "
+                          f"none was found in the scanned range)"))
+        return steps, False
     steps.append(Step("4.eas_attestation", "PASS",
                       f"uid={chosen['uid']} tx={chosen['_tx_hash']} "
                       f"attested_at={attested_at} attester={chosen['attester']}"))

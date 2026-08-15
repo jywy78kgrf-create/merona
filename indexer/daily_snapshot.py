@@ -402,10 +402,45 @@ def _fmt_since(store: Store, key: str):
 # Meta key under which the nightly run stashes the precomputed dashboard metrics.
 DASHBOARD_METRICS_KEY = "dashboard_metrics"
 
+# Statement timeout for the PUBLISH step (seller-index tiers + dashboard-metrics
+# scoped/superset aggregates), ms. Mirrors wash.py's WASH_STATEMENT_TIMEOUT_MS:
+# BOUNDED, never '0'/unbounded. On 2026-08-13, with wash+scores already fixed to
+# complete, the run reached this publish step and one of its unbounded
+# COUNT(DISTINCT ...) aggregates (a facilitator-scoped GROUP BY seller over the
+# grown ~13.9M-row Base settlements) ran long enough that the whole nightly hit
+# systemd's TimeoutStartSec wall and got SIGTERM'd mid-publish — losing the
+# ENTIRE dashboard/seller-index blob for every chain, not just the slow one,
+# even though wash and scores had already succeeded. An unbounded query can't
+# even be caught by our own try/except (the OS kills the process out from under
+# it); a BOUNDED one raises in time for the per-chain isolation below to catch
+# it, roll back, and carry forward/mark that one chain while the rest of the
+# blob still gets published. 20 min is generous for these aggregates and still
+# guarantees the publish step gives up and moves on well inside the run's
+# overall time budget.
+PUBLISH_STATEMENT_TIMEOUT_MS = int(
+    os.environ.get("PUBLISH_STATEMENT_TIMEOUT_MS", "1200000"))
+
 
 def _median(vals):
     vals = sorted(v for v in vals if v is not None)
     return vals[len(vals) // 2] if vals else None
+
+
+def _prior_dashboard_blob(store: Store) -> dict:
+    """Best-effort read of the last-published dashboard_metrics blob (meta
+    key DASHBOARD_METRICS_KEY). Used as the carry-forward source when
+    tonight's per-chain/per-section publish queries fail (isolated, below):
+    a stale-but-real prior number beats a fabricated zero or a silently
+    missing chain. Never raises; returns {} if there is no prior blob, or it
+    can't be parsed — callers then fall through to "unavailable" markers."""
+    try:
+        raw = store.get_meta(DASHBOARD_METRICS_KEY)
+        if not raw:
+            return {}
+        blob = json.loads(raw) if isinstance(raw, str) else raw
+        return blob if isinstance(blob, dict) else {}
+    except Exception:
+        return {}
 
 
 def build_instr_metrics(store: Store) -> dict:
@@ -710,13 +745,32 @@ def build_seller_index(store: Store) -> dict:
     One SQL statement per chain: a per-seller grouped subquery (payers/volume)
     wrapped in a single conditional-aggregation pass that buckets every tier at
     once — no per-seller Python loop over the ~100k Base sellers.
+
+    ISOLATION + CARRY-FORWARD (added after the 2026-08-13 incident): each
+    chain's tier query is now bounded (PUBLISH_STATEMENT_TIMEOUT_MS) and
+    individually isolated. If a chain's query still fails (timeout or
+    otherwise), that chain — and ONLY that chain — falls back, in order:
+      1. The LAST-PUBLISHED tiers for that chain, read from
+         meta[DASHBOARD_METRICS_KEY]['seller_index']['tiers'][chain] (only
+         if that prior value is itself a real tier list, not a previous
+         "unavailable" marker) — recorded under the returned dict's
+         "stale_chains" so a consumer can tell the numbers are old. A
+         stale-but-real tier count is better than a fabricated one.
+      2. If there is no usable prior value, the chain key gets an explicit
+         {"unavailable": True, "reason": ...} marker in place of a tier
+         list — never a fabricated all-zero tier list, which would read as
+         "measured: no sellers" instead of "not measured tonight".
+    Every other chain's freshly-measured tiers are unaffected.
     """
     wf = _witnessed_filter(store)
     try:
         by_chain = json.load(open(REGISTRY)).get("relayers_by_chain", {})
     except Exception:
         by_chain = {}
+    prior_tiers = ((_prior_dashboard_blob(store).get("seller_index") or {})
+                   .get("tiers") or {})
     tiers_by_chain: dict = {}
+    stale_chains: dict = {}
     for ch in _SELLER_INDEX_CHAINS:
         # Registry relayers, inlined as quoted literals (never user input:
         # the registry is our own reviewed file). Inlining keeps the query
@@ -748,6 +802,11 @@ def build_seller_index(store: Store) -> dict:
         # a parameter here, escape any literal '%' as '%%' first. (The
         # facilitator IN filter also implicitly excludes '<chain>_permit2'
         # rows: those never carry registry facilitators.)
+        # PERF: this is THE slow query (2026-08-13 incident) — a per-seller
+        # GROUP BY with COUNT(DISTINCT CASE WHEN payer<>seller ...) over the
+        # full facilitator-scoped settlements set, ~13.9M rows on Base. See
+        # the final report's PART C section for candidate indexes/rewrites
+        # (flagged for human EXPLAIN validation, not applied here).
         sql = (
             r"SELECT " + agg_cols + " FROM (SELECT seller, "
             # external payers only: a seller paying itself is not demand.
@@ -756,22 +815,39 @@ def build_seller_index(store: Store) -> dict:
             rf"WHERE chain='{ch}' AND facilitator IN ({rel_sql})"
             + wf +
             r" GROUP BY seller) t")
-        row = store.db.execute(sql).fetchone()
-        tiers = []
-        for i, (label, mp, mu) in enumerate(SELLER_INDEX_TIERS):
-            sellers = int(row[2 * i] or 0)
-            vol = store._norm_vol(row[2 * i + 1])
-            tiers.append({
-                "tier": label, "min_payers": mp, "min_usd": mu,
-                "sellers": sellers, "volume_usd": round((vol or 0) / 1e6, 2),
-            })
-        tiers_by_chain[ch] = tiers
-    return {
+        try:
+            row = store.db.execute(sql).fetchone()
+            tiers = []
+            for i, (label, mp, mu) in enumerate(SELLER_INDEX_TIERS):
+                sellers = int(row[2 * i] or 0)
+                vol = store._norm_vol(row[2 * i + 1])
+                tiers.append({
+                    "tier": label, "min_payers": mp, "min_usd": mu,
+                    "sellers": sellers, "volume_usd": round((vol or 0) / 1e6, 2),
+                })
+            tiers_by_chain[ch] = tiers
+        except Exception as e:
+            print(f"[seller-index] {ch} failed (isolated): {e}", file=sys.stderr)
+            try:
+                store.db.rollback()
+            except Exception:
+                pass
+            prior = prior_tiers.get(ch)
+            if isinstance(prior, list):
+                tiers_by_chain[ch] = prior
+                stale_chains[ch] = {"reason": str(e), "carried_forward": True}
+            else:
+                tiers_by_chain[ch] = {"unavailable": True, "reason": str(e)}
+                stale_chains[ch] = {"reason": str(e), "carried_forward": False}
+    out = {
         "method": ("x402-scoped: settlements via registry facilitators only; "
                    "distinct external payers = payers excluding self-pay; "
                    "lifetime USDC volume"),
         "tiers": tiers_by_chain,
     }
+    if stale_chains:
+        out["stale_chains"] = stale_chains
+    return out
 
 
 def build_dashboard_metrics(store: Store) -> dict:
@@ -788,8 +864,44 @@ def build_dashboard_metrics(store: Store) -> dict:
     even if a nightly run is missed.
     """
     scoped = build_x402_scoped(store)
+    # Last-published chain rows, for carry-forward when tonight's per-chain
+    # aggregates fail (see build_x402_scoped's isolation + the invariant test
+    # test_build_dashboard_metrics_always_publishes_under_chain_failure).
+    prior_chains = (_prior_dashboard_blob(store).get("chains") or {})
+    if not isinstance(prior_chains, dict):
+        prior_chains = {}
     chains, tot_set, tot_vol = {}, 0, 0.0
+    # CARRY-FORWARD PRECEDENCE (chain-level, mirrors build_seller_index's):
+    #   1. Tonight's freshly-measured row (the normal case).
+    #   2. On failure (build_x402_scoped marks the chain {"unavailable": True}
+    #      after rolling back), the LAST-PUBLISHED row for that chain from
+    #      meta[DASHBOARD_METRICS_KEY]['chains'][chain] — stale but real.
+    #   3. If there is no usable prior row either, an explicit
+    #      {"unavailable": True, "reason": ...} marker — never a fabricated
+    #      zero-settlements row.
+    # Every note lands in metrics["stale_chains"] so a consumer can tell which
+    # numbers are old/missing without having to diff against yesterday's blob.
+    stale_chains: dict = {}
     for ch, v in scoped.items():
+        if v.get("unavailable"):
+            prior_row = prior_chains.get(ch)
+            if isinstance(prior_row, dict) and not prior_row.get("unavailable"):
+                chains[ch] = prior_row
+                stale_chains.setdefault(ch, []).append(
+                    {"section": "scoped_stats", "reason": v.get("reason"),
+                     "carried_forward": True})
+                s = prior_row.get("settlements")
+                vol = prior_row.get("volume_usd")
+                if isinstance(s, (int, float)):
+                    tot_set += s
+                if isinstance(vol, (int, float)):
+                    tot_vol += vol
+            else:
+                chains[ch] = {"unavailable": True, "reason": v.get("reason")}
+                stale_chains.setdefault(ch, []).append(
+                    {"section": "scoped_stats", "reason": v.get("reason"),
+                     "carried_forward": False})
+            continue
         sup, sc = v["eip3009_superset"], v.get("x402_scoped")
         row = {"scopable": v["scopable"], "registry": v["relayer_registry_size"],
                "enriched": round(v["relayer_enriched_fraction"], 4),
@@ -830,11 +942,27 @@ def build_dashboard_metrics(store: Store) -> dict:
                 f"AND seller NOT IN ({ph})"), (ch, *rel, *rel)).fetchone()
             chains[ch]["merchant_settlements"] = int(mn)
             chains[ch]["merchant_volume_usd"] = round(store._norm_vol(mv) / 1e6, 2)
-        except Exception:
+        except Exception as e:
+            print(f"[dashboard] {ch} merchant-tier query failed (isolated): {e}",
+                  file=sys.stderr)
             try:
                 store.db.rollback()
             except Exception:
                 pass
+            # Carry forward the prior merchant-tier numbers for this chain
+            # rather than just dropping the keys — same precedence as the
+            # chain-level scoped/superset carry-forward above.
+            prior_row = prior_chains.get(ch) or {}
+            if isinstance(prior_row, dict) and "merchant_settlements" in prior_row:
+                chains[ch]["merchant_settlements"] = prior_row["merchant_settlements"]
+                chains[ch]["merchant_volume_usd"] = prior_row.get("merchant_volume_usd")
+                stale_chains.setdefault(ch, []).append(
+                    {"section": "merchant_tier", "reason": str(e),
+                     "carried_forward": True})
+            else:
+                stale_chains.setdefault(ch, []).append(
+                    {"section": "merchant_tier", "reason": str(e),
+                     "carried_forward": False})
 
     # Payer account-kind split (indexer/enrich_payer_kinds.py): EOA vs
     # EIP-7702-delegated EOA vs contract, among x402-scoped payers CHECKED so
@@ -876,7 +1004,15 @@ def build_dashboard_metrics(store: Store) -> dict:
                 if ch in chains and cv is not None:
                     chains[ch]["clean_volume_usd"] = float(cv)
     except Exception:
-        pass
+        # No rollback previously: on Postgres a failed statement here left the
+        # transaction ABORTED, and every query below (db_size, rows count,
+        # build_seller_index) would then die with InFailedSqlTransaction —
+        # exactly the kind of one-section failure that used to blank the
+        # whole blob. Guard it like every other isolated section.
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
 
     since = {"base": _fmt_since(store, "created_at_base"),
              "polygon": _fmt_since(store, "created_at_polygon"),
@@ -889,15 +1025,25 @@ def build_dashboard_metrics(store: Store) -> dict:
             db_size = f"{DB_PATH.stat().st_size / 1e6:.0f} MB"
     except Exception:
         db_size = None
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
     try:
         rows = store.db.execute("SELECT COUNT(*) FROM settlements").fetchone()[0]
     except Exception:
         rows = tot_set
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
     metrics = {"generated_at": datetime.now(timezone.utc).isoformat(),
                "chains": chains, "since": since,
                "totals": {"settlements": tot_set, "volume_usd": round(tot_vol, 2), "rows": rows},
                "db_size": db_size,
                "instr": build_instr_metrics(store)}
+    if stale_chains:
+        metrics["stale_chains"] = stale_chains
     # Real Seller Index — isolated exactly like every other section folded into
     # this blob (instr, merchant/clean tiers above): a bug or a slow/locked
     # table here must never blank the rest of the dashboard payload.
@@ -937,13 +1083,27 @@ def vacuum_settlements(store: Store) -> None:
 
 def store_dashboard_metrics(store: Store) -> dict | None:
     """Compute + persist the dashboard metrics into meta. Best-effort: on the
-    small tier these aggregates can be slow, so we lift the statement timeout for
-    just this step (it runs once, off-hours, with nothing competing). Never
-    raises to the caller — a metrics-precompute failure must not fail the run."""
+    small tier these aggregates can be slow, so we raise the statement timeout
+    (to PUBLISH_STATEMENT_TIMEOUT_MS — bounded, NOT unbounded) for just this
+    step. Never raises to the caller — a metrics-precompute failure must not
+    fail the run.
+
+    Was 'SET statement_timeout=0' (unbounded) until the 2026-08-13 incident:
+    with wash+scores already fixed to complete, the run reached this publish
+    step and one unbounded COUNT(DISTINCT ...) aggregate ran long enough to
+    hit systemd's TimeoutStartSec wall — the whole nightly process got
+    SIGTERM'd mid-publish, and NOTHING published for any chain, even though
+    wash and scores had already succeeded. Bounding this (see
+    PUBLISH_STATEMENT_TIMEOUT_MS) means a slow query now raises in time for
+    the per-chain isolation in build_x402_scoped/build_seller_index to catch
+    it, roll back, and carry forward/mark just that chain — instead of the
+    OS killing the process out from under an unbounded query and losing the
+    whole blob."""
     try:
         if store.PH == "%s":
             try:
-                store.db.execute("SET statement_timeout='0'")   # unbounded: runs once, off-peak
+                store.db.execute(
+                    f"SET statement_timeout='{PUBLISH_STATEMENT_TIMEOUT_MS}'")
                 store.db.commit()
             except Exception:
                 store.db.rollback()
@@ -1024,7 +1184,17 @@ def build_x402_scoped(store: Store) -> dict:
     (measured: Polygon superset is ~0% x402; Base ~95% by count / ~5% by volume).
     A chain with no registry (arbitrum/avalanche/optimism) is not scopable ->
     superset-only, labeled. Scoped numbers are complete only as enriched_fraction
-    -> 1.0 (see enrich_relayers.py)."""
+    -> 1.0 (see enrich_relayers.py).
+
+    ISOLATED PER CHAIN (added after the 2026-08-13 incident): this loop used to
+    run with no try/except at all — one chain's slow/failing COUNT(DISTINCT)
+    aggregate raised straight out of this function, past build_dashboard_metrics
+    (which has no catch-all of its own), into store_dashboard_metrics's outer
+    except — losing the ENTIRE dashboard blob for every chain over one chain's
+    query. Each chain's aggregates are now individually isolated: a failure
+    rolls back and yields an {"unavailable": True, "reason": ...} marker for
+    just that chain instead of raising. build_dashboard_metrics (the caller)
+    is what turns that marker into a carry-forward from the prior blob."""
     try:
         by_chain = json.load(open(REGISTRY)).get("relayers_by_chain", {})
     except Exception:
@@ -1032,14 +1202,29 @@ def build_x402_scoped(store: Store) -> dict:
     out: dict = {}
     for ch in ("base", "polygon", "avalanche", "optimism", "arbitrum", "solana"):
         relayers = by_chain.get(ch)
-        cov = store.relayer_enriched_fraction(ch)
-        out[ch] = {
-            "scopable": bool(relayers),
-            "relayer_registry_size": len(relayers) if relayers else 0,
-            "relayer_enriched_fraction": round(cov["fraction"], 4),
-            "x402_scoped": store.scoped_stats(ch, relayers) if relayers else None,
-            "eip3009_superset": store.stats(ch),
-        }
+        try:
+            cov = store.relayer_enriched_fraction(ch)
+            # PERF: scoped_stats' COUNT(DISTINCT seller)/COUNT(DISTINCT payer)
+            # over the full facilitator-scoped chain (no GROUP BY) is the other
+            # heavy aggregate alongside build_seller_index's tier query — see
+            # the final report's PART C section for candidate indexes/rewrites.
+            scoped = store.scoped_stats(ch, relayers) if relayers else None
+            sup = store.stats(ch)
+            out[ch] = {
+                "scopable": bool(relayers),
+                "relayer_registry_size": len(relayers) if relayers else 0,
+                "relayer_enriched_fraction": round(cov["fraction"], 4),
+                "x402_scoped": scoped,
+                "eip3009_superset": sup,
+            }
+        except Exception as e:
+            print(f"[dashboard] {ch} scoped/superset query failed (isolated): {e}",
+                  file=sys.stderr)
+            try:
+                store.db.rollback()
+            except Exception:
+                pass
+            out[ch] = {"unavailable": True, "reason": str(e)}
     return out
 
 
@@ -1096,13 +1281,21 @@ def run_coverage_canary(store: Store, date: str, finalized_heights: dict) -> dic
 def main() -> None:
     store = open_store(DB_PATH)
     # The nightly run is the one place these full-table aggregates (the snapshot's
-    # per-chain stats + the scoped/superset build) SHOULD be allowed to take their
-    # time: it runs once, off-peak, with nothing else on the DB. A short serving
-    # timeout here just aborts the query mid-snapshot, poisons the transaction
-    # (InFailedSqlTransaction), and cascade-crashes the whole run. Lift it.
+    # per-chain stats + the scoped/superset build) get more room than the tight
+    # serving-side timeout: it runs once, off-peak, with nothing else on the DB.
+    # A short serving timeout here just aborts the query mid-snapshot, poisons
+    # the transaction (InFailedSqlTransaction), and cascade-crashes the whole
+    # run. Raise it — but BOUNDED (PUBLISH_STATEMENT_TIMEOUT_MS), not unbounded
+    # ('0'): unbounded is exactly what let one slow aggregate run past
+    # systemd's TimeoutStartSec wall and take the whole nightly down with it on
+    # 2026-08-13 (see PUBLISH_STATEMENT_TIMEOUT_MS's docstring and
+    # store_dashboard_metrics, which sets the same value again immediately
+    # before the publish step below — this early SET covers the indexing-time
+    # stats() calls too).
     if store.PH == "%s":
         try:
-            store.db.execute("SET statement_timeout='0'")
+            store.db.execute(
+                f"SET statement_timeout='{PUBLISH_STATEMENT_TIMEOUT_MS}'")
             store.db.commit()
         except Exception:
             store.db.rollback()
@@ -1259,6 +1452,13 @@ def main() -> None:
     except Exception as e:
         print(f"[instr] runner error (isolated; settlement data unaffected): {e}",
               file=sys.stderr)
+        # every section below shares this same store.db — an unrolled-back
+        # DB error here would otherwise poison payto-watch/wash/scores too
+        # (same class of bug fixed 2026-08-12 inside wash.py/scores.py).
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
 
     # payTo integrity feed — the free public mismatch JSON (catalog payTo vs
     # live-probe payTo + rotation history). Pure derivation over the
@@ -1268,6 +1468,10 @@ def main() -> None:
         payto_watch.write_feed(store)
     except Exception as e:
         print(f"[payto-watch] failed (isolated): {e}", file=sys.stderr)
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
 
     # Wash/self-dealing filter (indexer/wash.py): reciprocal pairs +
     # funded-payer lookback on the top sellers -> nightly CLEAN metrics
@@ -1278,6 +1482,14 @@ def main() -> None:
         wash.run_wash(store, date)
     except Exception as e:
         print(f"[wash] runner error (isolated): {e}", file=sys.stderr)
+        # defense-in-depth: run_wash isolates its own sections internally
+        # (2026-08-12 fix), but a rollback here too means a future exception
+        # that escapes run_wash entirely still can't poison scores.run_scores
+        # right after it.
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
 
     # Scoring layer — endpoint reliability grades + payment-grounded seller
     # trust scores, computed from the day's immutable snapshot + the
@@ -1288,6 +1500,10 @@ def main() -> None:
         scores.run_scores(store, date)
     except Exception as e:
         print(f"[scores] runner error (isolated): {e}", file=sys.stderr)
+        try:
+            store.db.rollback()
+        except Exception:
+            pass
 
     # Reclaim the dead tuples the enrichment UPDATEs just created, so the table
     # doesn't bloat back into the aggregate-timeout territory we fixed. Best-effort

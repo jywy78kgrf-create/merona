@@ -40,7 +40,13 @@ SCORE_VERSION history:
           available that night. v2 could not distinguish "scanned clean"
           from "scan silently failed" (the reciprocal join timed out for an
           unknown stretch pre-2026-08-01 and scores kept flowing); rows now
-          carry the evidence of their own blind spots.
+          carry the evidence of their own blind spots. PER CHAIN, not global
+          (2026-08-12 audit): wash.py's WASH_CHAINS is base/polygon only, so
+          a Solana row now carries wash_scanned=False and null
+          wash_signals/recip_scan_ok — before this fix it published the
+          SAME wash-scan date and recip_scan_ok as Base/Polygon even though
+          zero wash scanning ever touches Solana, i.e. the opposite of
+          "carrying the evidence of its own blind spots".
       (c) DIVERSITY split into breadth (0-25, log distinct payers) +
           LOYALTY (0-10, log repeat tx/payer, payers ≥ 2). v2's single
           log-payer curve punished small sellers with genuine repeat
@@ -276,31 +282,54 @@ def _latest_snapshot_csv():
 
 def _load_wash_signals(store):
     """Latest nightly wash signals: {(chain, seller): (funded_ratio,
-    reciprocal, flagged)}. Latest-available (not strictly today's) so a failed
-    wash night degrades gracefully; the date used is recorded per score.
-    Also returns recip_scan_ok — whether that night's reciprocal self-join
-    actually ran (from the thresholds blob; None on pre-v3 rows). Without it,
+    reciprocal, flagged)}, plus PER-CHAIN wash_signals date and
+    recip_scan_ok — {chain: latest measured_date or None},
+    {chain: recip_scan_ok or None}. Latest-available PER CHAIN (not
+    strictly today's) so a failed wash night on one chain degrades
+    gracefully without hiding another chain's good data; the date used is
+    recorded per score.
+
+    Chain-scoped by construction (2026-08-12 audit): wash.py's WASH_CHAINS
+    is the only set that ever gets a wash_signals row written at all (see
+    indexer/wash.py — the funded-payer lookback and concentration scan both
+    loop `for ch in WASH_CHAINS`), so a chain with no rows here — e.g.
+    Solana — correctly comes back with date=None, recip_ok=None: "never
+    scanned", not silently inheriting another chain's evidence. Before this
+    fix, callers read ONE global MAX(measured_date)/recip_scan_ok for every
+    chain, so e.g. a Solana seller's published signals_live falsely claimed
+    the SAME wash-scan date and reciprocal-scan status as Base/Polygon.
+
+    recip_scan_ok is whether that chain's reciprocal self-join actually ran
+    (from the thresholds blob written alongside the funded-payer signal;
+    None on pre-v3 rows or a chain with no rows at all). Without it,
     reciprocal=False is ambiguous between "scanned clean" and "scan died"."""
     sig: dict = {}
-    sig_date = None
-    recip_ok = None
+    wash_dates: dict = {}
+    recip_ok: dict = {}
     try:
-        sig_date = store.db.execute(
-            "SELECT MAX(measured_date) FROM wash_signals").fetchone()[0]
-        if sig_date:
-            for ch, s, fr, rec, flg, thr in store.db.execute(store.q(
-                    "SELECT chain, seller, funded_payer_ratio, reciprocal, "
-                    "flagged, thresholds FROM wash_signals WHERE measured_date=?"),
-                    (sig_date,)):
+        chains = [c for (c,) in
+                 store.db.execute("SELECT DISTINCT chain FROM wash_signals")]
+        for ch in chains:
+            d = store.db.execute(store.q(
+                "SELECT MAX(measured_date) FROM wash_signals WHERE chain=?"),
+                (ch,)).fetchone()[0]
+            wash_dates[ch] = d
+            recip_ok[ch] = None
+            if not d:
+                continue
+            for s, fr, rec, flg, thr in store.db.execute(store.q(
+                    "SELECT seller, funded_payer_ratio, reciprocal, "
+                    "flagged, thresholds FROM wash_signals "
+                    "WHERE chain=? AND measured_date=?"), (ch, d)):
                 sig[(ch, s)] = (fr, bool(rec), bool(flg))
-                if recip_ok is None and thr:
+                if recip_ok[ch] is None and thr:
                     try:
-                        recip_ok = json.loads(thr).get("recip_scan_ok")
+                        recip_ok[ch] = json.loads(thr).get("recip_scan_ok")
                     except Exception:
                         pass
     except Exception:
         pass
-    return sig, sig_date, recip_ok
+    return sig, wash_dates, recip_ok
 
 
 def _load_census_tiers():
@@ -362,7 +391,10 @@ def compute_seller_scores(store, date: str) -> int:
     one of the seller's listed origins — an ungated 89 otherwise, with the
     gate decision recorded in components.
     Every row records signals_live: which wash inputs actually ran the night
-    it was computed. Provisional until MIN_MATURE_DAYS of snapshots."""
+    it was computed, PER CHAIN (2026-08-12 audit) — a chain outside wash.py's
+    WASH_CHAINS (e.g. Solana) gets wash_scanned=False and null
+    wash_signals/recip_scan_ok rather than silently inheriting another
+    chain's scan date. Provisional until MIN_MATURE_DAYS of snapshots."""
     snap_date, csv_path = _latest_snapshot_csv()
     if not csv_path:
         print("[scores] no snapshot to score from", file=sys.stderr)
@@ -371,19 +403,33 @@ def compute_seller_scores(store, date: str) -> int:
     provisional = n_snap_days < MIN_MATURE_DAYS
 
     # wash joins (v3): nightly signals + cycle flags + full-history batch flags
-    wash_sig, wash_date, recip_ok = _load_wash_signals(store)
+    wash_sig, wash_dates, recip_oks = _load_wash_signals(store)
     hist_flags, hist_shas = _load_history_flags()
+    import wash
     import wash_cycles
     cycle_flags, cycle_date, cycle_params = wash_cycles.load_flagged(store)
     census_tiers = _load_census_tiers()
     if wash_sig or hist_flags or cycle_flags:
         print(f"[scores] wash join: {len(wash_sig)} nightly signals "
-              f"({wash_date}, recip_scan_ok={recip_ok}), "
+              f"({wash_dates}, recip_scan_ok={recip_oks}), "
               f"{len(cycle_flags)} cycle flags ({cycle_date}), history flags: "
               + (", ".join(f"{c}:{len(s)}" for c, s in hist_flags.items())
                  or "none"))
-    signals_live = {"wash_signals": wash_date, "recip_scan_ok": recip_ok,
-                    "cycles": cycle_date}
+
+    def _signals_live(chain: str) -> dict:
+        """Per-chain signals_live — never borrows another chain's wash
+        evidence (2026-08-12 audit fix). `wash_scanned` is a STRUCTURAL fact
+        (is this chain even in wash.py's WASH_CHAINS scope at all), imported
+        from wash.py rather than re-listed here so the two can never drift;
+        `wash_signals`/`recip_scan_ok` are the DATA facts for this chain
+        specifically (may be None/false even inside WASH_CHAINS if a night's
+        scan failed — see _load_wash_signals). `cycles` stays chain-agnostic:
+        wash_cycles' detector genuinely runs on every chain, Solana included
+        (indexer/wash.py, the `for ch in (*WASH_CHAINS, "solana")` loop)."""
+        return {"wash_signals": wash_dates.get(chain),
+               "recip_scan_ok": recip_oks.get(chain),
+               "wash_scanned": chain in wash.WASH_CHAINS,
+               "cycles": cycle_date}
 
     # instrumentation joins: (chain, seller wallet) -> listed origins /
     # domains. Keyed per chain (2026-08-12 audit): keying by wallet alone
@@ -550,7 +596,7 @@ def compute_seller_scores(store, date: str) -> int:
                           "endpoint": round(endpoint, 1),
                           "domain": round(dom_pts, 1),
                           "self_pay_penalty": round(-penalty, 1),
-                          "signals_live": signals_live}
+                          "signals_live": _signals_live(chain)}
             if a_gate:
                 components["a_gate"] = a_gate
             if wash_pen or nflag or hflag or cflag:
@@ -559,7 +605,7 @@ def compute_seller_scores(store, date: str) -> int:
                     "funded_ratio": fr, "reciprocal": recip,
                     "nightly_flag": nflag, "history_flag": hflag,
                     "cycle_flag": cflag,
-                    "signals_date": wash_date,
+                    "signals_date": wash_dates.get(chain),
                     "flags_sha": hist_shas.get(chain)}
                 if cflag:
                     components["wash"]["cycle"] = {
@@ -586,7 +632,16 @@ def compute_seller_scores(store, date: str) -> int:
 
 
 def run_scores(store, date: str) -> None:
-    """All scorers, each isolated — a failure in one never blocks the others."""
+    """All scorers, each isolated — a failure in one never blocks the others.
+
+    "Isolated" only holds if the connection is actually clean going into the
+    next scorer: Postgres aborts the whole transaction on a failed statement,
+    and every later statement on that connection then raises
+    InFailedSqlTransaction until a rollback (observed 2026-08-12 — an
+    upstream wash.py timeout left the connection poisoned, and without the
+    rollback here endpoint_scores' failure cascaded into seller_scores and
+    payer_scores too, i.e. every scorer died even though each is individually
+    exception-wrapped)."""
     from payer_scores import compute_payer_scores
     for name, fn in (("endpoint_scores", compute_endpoint_scores),
                      ("seller_scores", compute_seller_scores),
@@ -596,3 +651,7 @@ def run_scores(store, date: str) -> None:
         except Exception as e:
             print(f"[scores] {name} failed (isolated): "
                   f"{type(e).__name__}: {str(e)[:140]}", file=sys.stderr)
+            try:
+                store.db.rollback()
+            except Exception:
+                pass

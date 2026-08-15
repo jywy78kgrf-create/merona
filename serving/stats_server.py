@@ -208,6 +208,15 @@ _FINDINGS = [
      "Score revisions: every rubric change, dated",
      "Including evidence-tiered letter grades: unrated below 7 observed "
      "days, provisional to 14, verified beyond."),
+    # A full page (dashboard/delivery.html), not a /docs/*.md reader entry —
+    # no data-slug card interception, no _DOC_SLUGS mapping. The 6th tuple
+    # element overrides the default findings#slug link with the real page.
+    ("delivery-audit", "2026-08-14", "AUDIT",
+     "The paid delivery audit — settled is not delivered",
+     "merona pays catalog endpoints their listed price with a real wallet "
+     "and publishes the mechanical outcome: a 402 challenge proves a "
+     "paywall, only payment proves delivery.",
+     "https://merona.io/delivery"),
 ]
 
 
@@ -226,8 +235,11 @@ def _rfc822(iso_day: str) -> str:
 
 def _build_rss() -> bytes:
     items = []
-    for slug, day, kind, title, summary in _FINDINGS:
-        link = f"https://merona.io/findings#{slug}"
+    for entry in _FINDINGS:
+        slug, day, kind, title, summary = entry[:5]
+        # optional 6th element: a real page instead of the default
+        # findings#slug in-page reader link (see delivery-audit above)
+        link = entry[5] if len(entry) > 5 else f"https://merona.io/findings#{slug}"
         items.append((day, f"""  <item>
     <title>[{_xml(kind)}] {_xml(title)}</title>
     <link>{_xml(link)}</link>
@@ -852,6 +864,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(503, json.dumps(
                     {"error": "seller index not yet available"}).encode(),
                     "application/json")
+        elif path == "/delivery.json":
+            # The public paid-delivery audit (attest/delivery_audit.py,
+            # run on the box against attest/payprobe.py's real receipts
+            # ledger). Static file, same read-and-serve shape as /live.json:
+            # a longer TTL is fine — this is a dated export, not a live poll.
+            try:
+                body = (ROOT / "serving" / "delivery_audit.json").read_bytes()
+                self._send(200, body, "application/json",
+                           cache="public, max-age=3600")
+            except OSError:
+                # deliberately uncached: the moment the first export lands,
+                # the page should see it — an hour-cached 404 would hide a
+                # fresh publish behind the CDN.
+                self._send(404, json.dumps(
+                    {"error": "no delivery audit published yet"}).encode(),
+                    "application/json")
         elif path == "/mismatches":
             # human-readable viewer for the free feed (renders /mismatches.json
             # client-side) — the dashboard's floating card lands here
@@ -887,14 +915,16 @@ class Handler(BaseHTTPRequestHandler):
                            cache="public, max-age=900")
             except Exception:
                 self._send(503, b"feed unavailable", "text/plain")
-        elif path in ("/privacy", "/editorial", "/findings", "/real-seller-index"):
+        elif path in ("/privacy", "/editorial", "/findings",
+                      "/real-seller-index", "/delivery"):
             # Static pages. Named from a fixed whitelist, never from the
             # request path — the mapping is the only thing that can reach disk.
             try:
                 name = {"/privacy": "privacy.html",
                         "/editorial": "editorial.html",
                         "/findings": "findings.html",
-                        "/real-seller-index": "real-seller-index.html"}[path]
+                        "/real-seller-index": "real-seller-index.html",
+                        "/delivery": "delivery.html"}[path]
                 body = (ROOT / "dashboard" / name).read_bytes()
                 self._send(200, body, "text/html; charset=utf-8",
                            cache="public, max-age=3600")

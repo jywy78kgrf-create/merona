@@ -6,9 +6,13 @@ best-effort: any probe can crash and it neither corrupts settlement data nor
 stops the others. Each collector is wrapped in isolation by run_instrumentation.
 
 Collectors:
-  1. endpoint_liveness  — HTTP GET each Bazaar-listed endpoint (no payment);
-     record status/latency/valid-402/content-type. Responses treated as INERT
-     (never parsed-for-exec; JSON shape checked defensively only).
+  1. endpoint_liveness  — probe each Bazaar-listed endpoint (no payment):
+     GET first, and only if that isn't a valid 402, fall back to ONE POST
+     (audit fix 2026-08-13: a large share of the x402 catalog answers ONLY
+     to POST and was being scored dead/non-402 off GET alone — see
+     _probe_x402). Record status/latency/valid-402/content-type. Responses
+     treated as INERT (never parsed-for-exec; JSON shape checked defensively
+     only).
   2. facilitator_health — derived from settlements already indexed. Solana has
      per-facilitator attribution; EVM is a superset with NO relayer captured, so
      it's recorded chain-level (facilitator unattributed). Latency/revert are
@@ -23,12 +27,15 @@ fingerprint as the day's snapshot); every table joins to it on measured_date.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import socket
 import ssl
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -42,15 +49,19 @@ BAZAAR_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
 # paging). The census feeds the price book + churn record; endpoint PROBES stay
 # capped separately below.
 BAZAAR_MAX_PAGES = int(os.environ.get("BAZAAR_MAX_PAGES", "300"))    # 100/page
-# Raised 250 -> 2500 (2026-08-05): the old cap plus first-N-in-catalog-order
-# selection probed the SAME ~250 origins nightly and left ~1,270 others nearly
-# never observed — an origin listed for 21 days had 2 observed days. With
-# grades gated on MIN_MATURE_DAYS distinct observations, capped coverage made
-# a letter unreachable for most of the catalog. At ~1,500 origins one polite
-# probe each (escalation only where the first answer was inconclusive) runs
-# ~15-40 min nightly — affordable. Any overflow beyond the cap rotates by
-# date-salted hash so no origin is ever permanently excluded.
-LIVENESS_MAX_ORIGINS = int(os.environ.get("LIVENESS_MAX_ORIGINS", "2500"))
+# Raised 250 -> 2500 (2026-08-05), 2500 -> 6000 (2026-08-13): the cap exists
+# only to bound nightly runtime, and it was quietly biting — the catalog holds
+# ~2,900 distinct origins, so 2,500 left ~440 rotating out on any given night
+# and the free payTo-mismatch feed's "no mismatch found" answer was silence,
+# not evidence, for whatever wasn't probed. The nightly now has ample headroom,
+# and full-origin liveness is ~5,900 polite probes (one + a couple of fallbacks
+# per origin) at PROBE_DELAY_S — ~30 min, and $0 (no payment sent). 6000 covers
+# every current origin with room for catalog growth; overflow past it still
+# rotates by date-salted hash so nothing is ever permanently excluded. NOTE
+# this caps ORIGINS (hostnames), not endpoints — matching a directory's
+# per-endpoint count would mean probing every URL, a larger runtime lift with
+# little added signal since one origin's liveness generalizes to its paths.
+LIVENESS_MAX_ORIGINS = int(os.environ.get("LIVENESS_MAX_ORIGINS", "6000"))
 DOMAIN_MAX = int(os.environ.get("DOMAIN_MAX", "150"))
 PROBE_DELAY_S = float(os.environ.get("PROBE_DELAY_S", "0.3"))
 PROBE_TIMEOUT_S = float(os.environ.get("PROBE_TIMEOUT_S", "8"))
@@ -177,6 +188,33 @@ def _dedupe_by_origin(resources: list) -> list:
 # request budget grows only where the first answer was inconclusive.
 LIVENESS_402_FALLBACKS = int(os.environ.get("LIVENESS_402_FALLBACKS", "2"))
 
+# --- per-endpoint sweep (probe_endpoints_full) -------------------------------
+# Unlike probe_endpoint_liveness's one-representative-per-origin sample, this
+# probes every DISTINCT endpoint URL — a host with 10 endpoints where 9 are
+# broken reads "alive" off the one working origin-level probe, so per-endpoint
+# depth is a real coverage gap the origin sample can't see. But the catalog is
+# savagely host-concentrated (measured 2026-08-13: 78% of ~23-33k endpoint
+# URLs on just 51 hosts — lowpaymentfee.com alone ~10,028, agent402.tools
+# ~4,470 — while 1,162 "normal" hosts hold ~7,000 endpoints, median 2 each),
+# so "probe every URL" would mean hammering one host 10k times for near-zero
+# added signal. Capped PER HOST instead: a host over the cap gets a
+# date-salted rotated sample (same idiom as the origin overflow above), so
+# every endpoint on a giant host accrues coverage over successive nights and
+# the night's plan is always re-derivable from the same catalog + date.
+LIVENESS_PER_HOST_CAP = int(os.environ.get("LIVENESS_PER_HOST_CAP", "50"))
+# Hosts are probed IN PARALLEL; endpoints WITHIN a host stay SERIAL with
+# PROBE_DELAY_S between them — politeness never hammers one host concurrently,
+# only spreads load ACROSS hosts. Each worker thread owns its own
+# requests.Session (Sessions are not thread-safe to share across threads).
+LIVENESS_HOST_WORKERS = int(os.environ.get("LIVENESS_HOST_WORKERS", "24"))
+# Backstop on total per-endpoint probe volume regardless of the per-host cap
+# (catalog growth, or a pathological many-host directory blowing past the
+# per-host cap's aggregate). The committed catalog is ~7-9k capped URLs at the
+# default cap, comfortably under this; when exceeded, rotate-sample down by
+# date-salted hash across ALL capped URLs (not just within one host) and log
+# it — silent truncation is a lie.
+LIVENESS_MAX_ENDPOINTS = int(os.environ.get("LIVENESS_MAX_ENDPOINTS", "12000"))
+
 
 def _origin_probe_plan(resources: list) -> list:
     """[(origin, [rep, fallback...])] in catalog order. Fallbacks are the
@@ -210,14 +248,71 @@ def _origin_probe_plan(resources: list) -> list:
     return plan
 
 
+# --- shared GET-then-POST x402 probe ----------------------------------------
+# Audit fix (2026-08-13): merona's liveness probes sent only HTTP GET. A rival
+# validator (the402) reports ~5,273 of ~14,402 catalog endpoints answer ONLY
+# to POST — GET gets a 405 (or some other non-402), _parse_402_offers scores
+# it not-alive/not-valid, and a POST-only seller's live_offers never populate,
+# so the payTo-mismatch feed has no live side to compare it against. That's
+# roughly a third of the catalog silently mis-scored. Fixed once, shared by
+# both probe call sites (probe_endpoint_liveness's origin sample and
+# _probe_host_serial's per-endpoint sweep) so there is exactly one place that
+# knows how to probe a URL for x402 liveness.
+def _probe_x402(session, url: str):
+    """GET first (the common case — one request, no wasted second call for
+    endpoints that already answer GET). If GET didn't yield a valid 402 —
+    wrong status/shape, OR GET raised outright — retry ONCE with POST (empty
+    JSON body; x402 servers emit the 402 challenge before reading the request
+    body, so an empty body is enough to provoke it). This is a SECOND request
+    to the same host, but it only fires for endpoints GET couldn't validate,
+    so healthy GET endpoints still cost exactly one request; worst case per
+    endpoint is 2 requests, bounded by the existing per-host cap.
+
+    Returns (response, valid_402, offers, method) for whichever attempt
+    produced the returned answer — "method" says which verb it was (used to
+    populate the row; see callers for where/whether that's persisted). If
+    POST also raises AND GET raised (or never got a response), the POST
+    exception propagates — callers keep their existing per-probe try/except
+    around this call, so a network error on either verb still becomes an
+    error row, never an unhandled crash. If GET got a response but wasn't a
+    valid 402, and POST then raises, the GET response is returned as the most
+    informative thing we actually have (valid=False)."""
+    get_r = get_valid = get_offers = None
+    get_failed = False
+    try:
+        get_r = session.get(url, timeout=PROBE_TIMEOUT_S,
+                            allow_redirects=False, stream=True)
+        get_valid, get_offers = _parse_402_offers(get_r)
+        if get_valid:
+            return get_r, True, get_offers, "GET"
+    except Exception:
+        get_failed = True
+
+    try:
+        post_r = session.post(url, timeout=PROBE_TIMEOUT_S,
+                              allow_redirects=False, stream=True, json={})
+        post_valid, post_offers = _parse_402_offers(post_r)
+        if get_r is not None:
+            try:
+                get_r.close()
+            except Exception:
+                pass
+        return post_r, post_valid, post_offers, "POST"
+    except Exception:
+        if get_failed:
+            raise
+        return get_r, get_valid, get_offers, "GET"
+
+
 # --- 1. endpoint liveness ---------------------------------------------------
 def probe_endpoint_liveness(store, date: str, resources: list) -> int:
-    """GET a representative listed path per origin (no payment); if it answers
-    but not with a valid x402 402, escalate through alternate listed paths
-    seeking one. Every probe records its own liveness row (scoring aggregates
-    per origin per day). Capped + polite. Responses are inert: we read a small
-    bounded chunk and only shape-check for an x402 402 body — never execute or
-    fully deserialize."""
+    """GET (then, if needed, POST — see _probe_x402) a representative listed
+    path per origin (no payment); if it answers but not with a valid x402
+    402, escalate through alternate listed paths seeking one. Every probe
+    records its own liveness row (scoring aggregates per origin per day).
+    Capped + polite. Responses are inert: we read a small bounded chunk and
+    only shape-check for an x402 402 body — never execute or fully
+    deserialize."""
     plan = _origin_probe_plan(resources)
     if len(plan) > LIVENESS_MAX_ORIGINS:
         # Fair rotation for the overflow: rank by date-salted hash so the
@@ -245,13 +340,18 @@ def probe_endpoint_liveness(store, date: str, resources: list) -> int:
             alive = valid = False
             t0 = time.monotonic()
             try:
-                r = s.get(res["resource"], timeout=PROBE_TIMEOUT_S,
-                          allow_redirects=False, stream=True)
+                r, valid, offers, method = _probe_x402(s, res["resource"])
                 row["latency_ms"] = int((time.monotonic() - t0) * 1000)
                 row["http_status"] = r.status_code
                 row["content_type"] = r.headers.get("content-type")
-                row["raw_headers"] = dict(list(r.headers.items())[:25])
-                valid, offers = _parse_402_offers(r)
+                headers = dict(list(r.headers.items())[:25])
+                # No endpoint_liveness column for probe method (avoiding a
+                # schema migration for this) — stash it in the existing
+                # free-text raw_headers JSON blob instead. The correctness
+                # win is valid_402 + live_offers being right for POST-only
+                # endpoints; recording the verb is a bonus, not the point.
+                headers["_probe_method"] = method
+                row["raw_headers"] = headers
                 row["valid_402"] = valid
                 alive = True
                 # what the endpoint ACTUALLY asks for right now — the live side
@@ -273,16 +373,34 @@ def probe_endpoint_liveness(store, date: str, resources: list) -> int:
 
 
 def _parse_402_offers(r) -> tuple[bool, list]:
-    """(valid_402, offers) — valid iff status==402 and the body defensively
-    parses to an x402 shape; offers are the payTo/network/asset triples the
-    endpoint asks for LIVE (capped at 8, strings clipped, inert: at most 8 KB
-    read, shape-checked field extraction only, never executed)."""
+    """(valid_402, offers) — valid iff status==402 and either the body or the
+    PAYMENT-REQUIRED response header defensively parses to an x402 shape;
+    offers are the payTo/network/asset triples the endpoint asks for LIVE
+    (capped at 8, strings clipped, inert: at most 8 KB read, shape-checked
+    field extraction only, never executed).
+
+    x402 v2 header dialect — CONFIRMED, not speculative: attest/payprobe.py's
+    parse_offer() and attest/contact_harvest.py's from_402() already handle
+    this same shape, both citing "observed live 2026-08-07" (see commit
+    0a46880: "Live probing showed the ecosystem has moved: v2 servers put the
+    base64 machine offer in a PAYMENT-REQUIRED response header (body is a
+    human summary)"). Checked header-then-body here too, same precedence, so
+    a v2 endpoint whose body carries no accepts isn't mis-scored invalid."""
     if r.status_code != 402:
         return False, []
     try:
-        chunk = next(r.iter_content(8192), b"") or b""
         import json as _json
-        body = _json.loads(chunk.decode("utf-8", "replace"))
+        body = None
+        hdr = getattr(r, "headers", None) and r.headers.get("PAYMENT-REQUIRED")
+        if hdr:
+            try:
+                body = _json.loads(base64.b64decode(hdr))
+            except Exception:
+                body = None
+        if not (isinstance(body, dict)
+                and ("accepts" in body or "x402Version" in body)):
+            chunk = next(r.iter_content(8192), b"") or b""
+            body = _json.loads(chunk.decode("utf-8", "replace"))
         if not (isinstance(body, dict)
                 and ("accepts" in body or "x402Version" in body)):
             return False, []
@@ -313,6 +431,151 @@ def _parse_402_offers(r) -> tuple[bool, list]:
 def _looks_like_x402_402(r) -> bool:
     """Back-compat shim over _parse_402_offers (boolean-only callers/tests)."""
     return _parse_402_offers(r)[0]
+
+
+def _endpoint_probe_plan(resources: list, date: str) -> dict:
+    """{host: [resource...]} — every DISTINCT endpoint URL, grouped by host
+    (urlparse netloc) and deduped within a host (resources carries one row per
+    accepts LEG; liveness probes the URL, not a leg, so a URL listed twice
+    must be probed once). Hosts over LIVENESS_PER_HOST_CAP get a date-salted
+    rotated sample instead of the first N in catalog order, so the excluded
+    set changes nightly and every endpoint on a giant host accrues observation
+    days over time — deterministic per date, so re-derivable from the same
+    catalog anyone else can fetch. Logs exactly what got capped."""
+    by_host: dict = {}
+    seen: dict = {}
+    for res in resources:
+        url = res.get("resource")
+        if not url:
+            continue
+        host = urlparse(url).netloc
+        if host not in by_host:
+            by_host[host] = []
+            seen[host] = set()
+        if url in seen[host]:
+            continue
+        seen[host].add(url)
+        by_host[host].append(res)
+
+    plan: dict = {}
+    capped_hosts, sampled, total_of_capped = 0, 0, 0
+    for host, lst in by_host.items():
+        if len(lst) > LIVENESS_PER_HOST_CAP:
+            lst = sorted(lst, key=lambda r: hashlib.sha256(
+                f"{date}:{host}:{r['resource']}".encode()).hexdigest())
+            capped_hosts += 1
+            total_of_capped += len(by_host[host])
+            lst = lst[:LIVENESS_PER_HOST_CAP]
+            sampled += len(lst)
+        plan[host] = lst
+    if capped_hosts:
+        print(f"[instr] per-endpoint: {capped_hosts} hosts capped, "
+              f"{sampled} urls sampled of {total_of_capped}")
+
+    total = sum(len(v) for v in plan.values())
+    if total > LIVENESS_MAX_ENDPOINTS:
+        # Aggregate backstop: rotate-sample down across ALL capped URLs
+        # (regardless of host) rather than dropping whole hosts, so the cut
+        # stays even across the catalog instead of zeroing out a tail of hosts.
+        flat = [(h, r) for h, lst in plan.items() for r in lst]
+        flat.sort(key=lambda hr: hashlib.sha256(
+            f"{date}:{hr[1]['resource']}".encode()).hexdigest())
+        dropped = len(flat) - LIVENESS_MAX_ENDPOINTS
+        flat = flat[:LIVENESS_MAX_ENDPOINTS]
+        print(f"[instr] per-endpoint: backstop cap hit, probing "
+              f"{LIVENESS_MAX_ENDPOINTS} of {LIVENESS_MAX_ENDPOINTS + dropped} "
+              f"capped urls tonight ({dropped} rotate to later nights)")
+        plan = {}
+        for h, r in flat:
+            plan.setdefault(h, []).append(r)
+    return plan
+
+
+def _probe_host_serial(host: str, picks: list) -> list:
+    """Probe one host's (already-capped) URL list SERIALLY on its OWN Session
+    (Sessions are not thread-safe; this runs inside a worker thread). Same
+    probe shape / inert-read discipline as probe_endpoint_liveness (GET, then
+    POST via _probe_x402 if GET didn't yield a valid 402), but never breaks
+    early — per-endpoint coverage wants every URL, not just until the first
+    valid 402. Returns [(liveness_row, [offers])]; a single bad endpoint's
+    exception is caught per-probe so it can't cost the rest of the host's
+    list, matching probe_endpoint_liveness's per-probe isolation. No sleep
+    is inserted between an endpoint's GET and its POST fallback — they're one
+    logical probe — so worst case here is 2x requests per endpoint, still
+    bounded by PER_HOST_CAP and PROBE_DELAY_S between distinct endpoints."""
+    s = requests.Session()
+    s.headers["User-Agent"] = "x402-index-liveness/1.0 (+read-only probe)"
+    results = []
+    for i, res in enumerate(picks):
+        row = {"endpoint_url": res["resource"],
+               "seller_wallet": res.get("seller_wallet"),
+               "network": res.get("network")}
+        offers = []
+        t0 = time.monotonic()
+        try:
+            r, valid, offers, method = _probe_x402(s, res["resource"])
+            row["latency_ms"] = int((time.monotonic() - t0) * 1000)
+            row["http_status"] = r.status_code
+            row["content_type"] = r.headers.get("content-type")
+            headers = dict(list(r.headers.items())[:25])
+            headers["_probe_method"] = method   # see probe_endpoint_liveness
+            row["raw_headers"] = headers
+            row["valid_402"] = valid
+            r.close()
+        except Exception as e:
+            row["latency_ms"] = int((time.monotonic() - t0) * 1000)
+            row["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        results.append((row, offers))
+        if i < len(picks) - 1:
+            time.sleep(PROBE_DELAY_S)          # politeness WITHIN the host
+    return results
+
+
+def probe_endpoints_full(store, date: str, resources: list) -> int:
+    """PER-ENDPOINT liveness sweep, capped PER HOST — the payTo-mismatch feed's
+    sibling to probe_endpoint_liveness (one-representative-per-origin). Probes
+    every distinct endpoint URL in the catalog instead of one per origin, so a
+    host with 10 endpoints where 9 are broken can no longer read "alive" off
+    the one working URL. See _endpoint_probe_plan for the per-host cap +
+    rotation and the LIVENESS_MAX_ENDPOINTS backstop.
+
+    Hosts are probed IN PARALLEL (ThreadPoolExecutor, LIVENESS_HOST_WORKERS
+    workers); endpoints WITHIN a host stay SERIAL (politeness). DB WRITES ARE
+    NOT CONCURRENT: every result is collected in memory and written in the
+    MAIN thread only after the pool has fully completed, so SQLite/psycopg
+    connections are never touched from more than one thread. A crash inside
+    one host's worker still yields error rows for that host's pending URLs
+    (via the outer as_completed try/except) rather than silently dropping
+    them or aborting the other hosts' results. Returns total probes done."""
+    plan = _endpoint_probe_plan(resources, date)
+    all_results: list = []
+    with ThreadPoolExecutor(max_workers=LIVENESS_HOST_WORKERS) as ex:
+        futs = {ex.submit(_probe_host_serial, host, picks): (host, picks)
+                for host, picks in plan.items()}
+        for fut in as_completed(futs):
+            host, picks = futs[fut]
+            try:
+                all_results.extend(fut.result())
+            except Exception as e:
+                # the worker itself blew up (not a per-probe error, which
+                # _probe_host_serial already catches) — record it per pending
+                # URL so this host's failure never silently vanishes from the
+                # night's count, and never takes the other hosts down with it
+                err = f"{type(e).__name__}: {str(e)[:120]}"
+                for res in picks:
+                    all_results.append(({"endpoint_url": res["resource"],
+                                         "seller_wallet": res.get("seller_wallet"),
+                                         "network": res.get("network"),
+                                         "latency_ms": 0, "error": err}, []))
+
+    n = 0
+    ts = _utcnow()
+    for row, offers in all_results:
+        for off in offers:
+            store.record_live_offer(date, row["endpoint_url"], off, ts)
+        store.record_endpoint_liveness(date, row, ts)   # commits
+        n += 1
+    return n
 
 
 # --- 2. facilitator health (from settlements) -------------------------------

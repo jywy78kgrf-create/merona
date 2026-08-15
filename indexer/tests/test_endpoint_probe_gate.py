@@ -48,14 +48,26 @@ VALID_402 = {"x402Version": 1, "accepts": [
 
 
 class _FakeSession:
-    """Scripted per-URL responses; records the probe order."""
+    """Scripted per-URL responses; records the probe order. GET-then-POST
+    fallback (instrumentation._probe_x402) now means a non-valid GET tries
+    the SAME scripted URL again via POST — .post() reuses the same script so
+    existing scripts (one entry per URL) still resolve, without changing
+    which order/count of *GET* calls (`self.calls`) each test asserts on."""
     def __init__(self, script):
         self.script = script
         self.calls = []
+        self.post_calls = []
         self.headers = {}
 
     def get(self, url, **kw):
         self.calls.append(url)
+        r = self.script[url]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    def post(self, url, **kw):
+        self.post_calls.append(url)
         r = self.script[url]
         if isinstance(r, Exception):
             raise r

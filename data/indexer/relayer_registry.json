@@ -1,0 +1,1290 @@
+{
+  "source": "github.com/Merit-Systems/x402scan",
+  "source_commit": "fbe1b4aef78f201c309ff238c936aa2bcc507d12",
+  "note": "Relayer (tx sender) addresses per facilitator per network, parsed from the structured `addresses` blocks. A settlement = a USDC transfer whose tx.from is one of these.",
+  "facilitators": {
+    "402104": {
+      "base": [
+        {
+          "address": "0x73b2b8df52fbe7c40fe78db52e3dffdd5db5ad07",
+          "first_tx_date": "2025-10-29"
+        }
+      ]
+    },
+    "anyspend": {
+      "base": [
+        {
+          "address": "0x179761d9eed0f0d1599330cc94b0926e68ae87f1",
+          "first_tx_date": "2025-11-03"
+        }
+      ],
+      "solana": [
+        {
+          "address": "34DmdeSbEnng2bmbSj9ActckY49km2HdhiyAwyXZucqP",
+          "first_tx_date": "2025-11-03"
+        }
+      ]
+    },
+    "aurracloud": {
+      "base": [
+        {
+          "address": "0x222c4367a2950f3b53af260e111fc3060b0983ff",
+          "first_tx_date": "2025-10-05"
+        },
+        {
+          "address": "0xb70c4fe126de09bd292fe3d1e40c6d264ca6a52a",
+          "first_tx_date": "2025-10-27"
+        },
+        {
+          "address": "0xd348e724e0ef36291a28dfeccf692399b0e179f8",
+          "first_tx_date": "2025-10-29"
+        }
+      ],
+      "solana": [
+        {
+          "address": "8x8CzkTHTYkW18frrTR7HdCV6fsjenvcykJAXWvoPQW",
+          "first_tx_date": "2025-10-30"
+        }
+      ]
+    },
+    "auto": {
+      "base": []
+    },
+    "bitrefill": {
+      "base": [
+        {
+          "address": "0x15e2e2da7539ef1f652aa3c1d6142a535aa3d7ea",
+          "first_tx_date": "2026-02-14"
+        }
+      ],
+      "solana": [
+        {
+          "address": "PcTZWki36z5Y82TAATKK48XUdfsgmS5oLkw2Ta7vWyK",
+          "first_tx_date": "2026-02-19"
+        }
+      ]
+    },
+    "cascade": {
+      "solana": [
+        {
+          "address": "7NetKx8TuRMBpqYFKZCVetkNuvWCPTrgekmGrsJwTmfN",
+          "first_tx_date": "2026-03-05"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x2bb201f1bb056eb738718bd7a3ad1bef24b883bb",
+          "first_tx_date": "2026-03-05"
+        }
+      ]
+    },
+    "codenut": {
+      "base": [
+        {
+          "address": "0x8d8Fa42584a727488eeb0E29405AD794a105bb9b",
+          "first_tx_date": "2025-10-13"
+        },
+        {
+          "address": "0x87aF99356d774312B73018b3B6562e1aE0e018C9",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x65058CF664D0D07f68B663B0D4b4f12A5E331a38",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x88E13D4c764a6c840Ce722A0a3765f55A85b327E",
+          "first_tx_date": "2025-10-31"
+        }
+      ],
+      "solana": [
+        {
+          "address": "HsozMJWWHNADoZRmhDGKzua6XW6NNfNDdQ4CkE9i5wHt",
+          "first_tx_date": "2025-11-03"
+        }
+      ]
+    },
+    "coinbase": {
+      "base": [
+        {
+          "address": "0xdbdf3d8ed80f84c35d01c6c9f9271761bad90ba6",
+          "first_tx_date": "2025-05-05"
+        },
+        {
+          "address": "0x9aae2b0d1b9dc55ac9bab9556f9a26cb64995fb9",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x3a70788150c7645a21b95b7062ab1784d3cc2104",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x708e57b6650a9a741ab39cae1969ea1d2d10eca1",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0xce82eeec8e98e443ec34fda3c3e999cbe4cb6ac2",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x7f6d822467df2a85f792d4508c5722ade96be056",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x001ddabba5782ee48842318bd9ff4008647c8d9c",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x9c09faa49c4235a09677159ff14f17498ac48738",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0xcbb10c30a9a72fae9232f41cbbd566a097b4e03a",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x9fb2714af0a84816f5c6322884f2907e33946b88",
+          "first_tx_date": "2025-10-31"
+        },
+        {
+          "address": "0x47d8b3c9717e976f31025089384f23900750a5f4",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x94701e1df9ae06642bf6027589b8e05dc7004813",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x552300992857834c0ad41c8e1a6934a5e4a2e4ca",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0xd7469bf02d221968ab9f0c8b9351f55f8668ac4f",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x88800e08e20b45c9b1f0480cf759b5bf2f05180c",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x6831508455a716f987782a1ab41e204856055cc2",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0xdc8fbad54bf5151405de488f45acd555517e0958",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x91d313853ad458addda56b35a7686e2f38ff3952",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0xadd5585c776b9b0ea77e9309c1299a40442d820f",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x4ffeffa616a1460570d1eb0390e264d45a199e91",
+          "first_tx_date": "2025-11-11"
+        },
+        {
+          "address": "0x8f5cb67b49555e614892b7233cfddebfb746e531",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "0x67b9ce703d9ce658d7c4ac3c289cea112fe662af",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "0x68a96f41ff1e9f2e7b591a931a4ad224e7c07863",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "0x97acce27d5069544480bde0f04d9f47d7422a016",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "0xa32ccda98ba7529705a059bd2d213da8de10d101",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "0x2a89407a98a0732b7fd578c4e156b7166540eb5a",
+          "first_tx_date": "2026-06-15"
+        },
+        {
+          "address": "0xe72f0af4cf41356d433723547f1412ca27fbb1b8",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0xca5e87f82b3fa093800e6ad67d621a427d79c70d",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x4c934c63c786157fefd990945b25ea60a0fb0205",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x64cc42b1ce598e3abcfbb64df4688521ddbf1f0a",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0xe74817f4cdc15844314812b2271276e64e890fae",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x625d8a65134079f8faaac39a7947c73d93c6ac39",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x14fda13953fc30428938e6bf950d036e77214e52",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x68efafe862d89ce66dd3d7b07d5a3747a0871164",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x59b7ebc67a3d627fabaf06768c818638452ae704",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x42dd53906b49c202e8e934b059dc019e04634b00",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0xb87e1a2cc2b4643f2892768e80e41167f17c5860",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x8cda367232d78c067116e3260da881d2da8ffa39",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x93f6601151ccb08f333ab4b1cccfb1e188c0be44",
+          "first_tx_date": "2026-06-12"
+        },
+        {
+          "address": "0x772003a2e9c2ccc8af956870a37a66f64f8cec38",
+          "first_tx_date": "2026-06-12"
+        }
+      ],
+      "solana": [
+        {
+          "address": "L54zkaPQFeTn1UsEqieEXBqWrPShiaZEPD7mS5WXfQg",
+          "first_tx_date": "2025-10-24"
+        },
+        {
+          "address": "BENrLoUbndxoNMUS5JXApGMtNykLjFXXixMtpDwDR9SP",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "D6ZhtNQ5nT9ZnTHUbqXZsTx5MH2rPFiBBggX4hY1WePM",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "GVJJ7rdGiXr5xaYbRwRbjfaJL7fmwRygFi1H6aGqDveb",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "Hc3sdEAsCGQcpgfivywog9uwtk8gUBUZgsxdME1EJy88",
+          "first_tx_date": "2025-12-16"
+        },
+        {
+          "address": "92QcYJZpkwYyacR3G69QNR2JfjadQxd16cp5d7x5GEzU",
+          "first_tx_date": "2026-06-12"
+        }
+      ]
+    },
+    "corbits": {
+      "solana": [
+        {
+          "address": "AepWpq3GQwL8CeKMtZyKtKPa7W91Coygh3ropAJapVdU",
+          "first_tx_date": "2025-09-21"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x06F0BfD2C8f36674DF5cdE852c1eeD8025C268C9",
+          "first_tx_date": "2025-09-22"
+        }
+      ],
+      "polygon": [
+        {
+          "address": "0x06F0BfD2C8f36674DF5cdE852c1eeD8025C268C9",
+          "first_tx_date": "2025-10-24"
+        }
+      ]
+    },
+    "daydreams": {
+      "base": [
+        {
+          "address": "0x279e08f711182c79Ba6d09669127a426228a4653",
+          "first_tx_date": "2025-10-16"
+        },
+        {
+          "address": "0x1363C7Ff51CcCE10258A7F7bddd63bAaB6aAf678",
+          "first_tx_date": "2026-01-16"
+        }
+      ],
+      "solana": [
+        {
+          "address": "DuQ4jFMmVABWGxabYHFkGzdyeJgS1hp4wrRuCtsJgT9a",
+          "first_tx_date": "2025-10-16"
+        }
+      ]
+    },
+    "dexter": {
+      "solana": [
+        {
+          "address": "DeXterR2kQm8AvRHnNPatWkE46TfAcMeBDjb6FySoAb8",
+          "first_tx_date": "2026-04-10"
+        },
+        {
+          "address": "DEXVS3su4dZQWTvvPnLDJLRK1CeeKG6K3QqdzthgAkNV",
+          "first_tx_date": "2025-10-26"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x402Feee072D655B85e08f1751AF9ddbCd249521f",
+          "first_tx_date": "2026-04-10"
+        },
+        {
+          "address": "0x40272E2eAc848Ea70db07Fd657D799bD309329C4",
+          "first_tx_date": "2025-12-25"
+        }
+      ]
+    },
+    "figment-facilitator": {
+      "solana": [
+        {
+          "address": "93syNmtT1tTd5ZtPwHqzGf6CM7fKhMmArpv4AM4FtyNX",
+          "first_tx_date": "2026-06-26"
+        }
+      ]
+    },
+    "fluxa": {
+      "base": [
+        {
+          "address": "0x7f72a02c682e908d46a5677fe937cdb612d94a3b",
+          "first_tx_date": "2025-10-28"
+        },
+        {
+          "address": "0xc67b555b4a9d340ed7c5d87743163c31a75f2254",
+          "first_tx_date": "2025-10-28"
+        },
+        {
+          "address": "0xaa0df01e4d11decf2ad2c459c81d3a495e4f1925",
+          "first_tx_date": "2025-10-28"
+        },
+        {
+          "address": "0xb5d25e1fa0718bf3e1bf698f96791d4e93632ec8",
+          "first_tx_date": "2025-10-28"
+        },
+        {
+          "address": "0x24d4f332d8e886fc005bb4a103bad21d9ebc2b7f",
+          "first_tx_date": "2025-10-28"
+        },
+        {
+          "address": "0xd2f74a14522d40e4a1d7fbb62aa97ce99fa1a7e5",
+          "first_tx_date": "2025-10-28"
+        }
+      ]
+    },
+    "heurist": {
+      "base": [
+        {
+          "address": "0xb578b7db22581507d62bdbeb85e06acd1be09e11",
+          "first_tx_date": "2025-11-07"
+        },
+        {
+          "address": "0x021cc47adeca6673def958e324ca38023b80a5be",
+          "first_tx_date": "2025-11-07"
+        },
+        {
+          "address": "0x3f61093f61817b29d9556d3b092e67746af8cdfd",
+          "first_tx_date": "2025-11-07"
+        },
+        {
+          "address": "0x290d8b8edcafb25042725cb9e78bcac36b8865f8",
+          "first_tx_date": "2025-11-07"
+        },
+        {
+          "address": "0x612d72dc8402bba997c61aa82ce718ea23b2df5d",
+          "first_tx_date": "2025-11-07"
+        },
+        {
+          "address": "0x1fc230ee3c13d0d520d49360a967dbd1555c8326",
+          "first_tx_date": "2025-11-10"
+        },
+        {
+          "address": "0x48ab4b0af4ddc2f666a3fcc43666c793889787a3",
+          "first_tx_date": "2025-11-10"
+        },
+        {
+          "address": "0xd97c12726dcf994797c981d31cfb243d231189fb",
+          "first_tx_date": "2025-11-10"
+        },
+        {
+          "address": "0x90d5e567017f6c696f1916f4365dd79985fce50f",
+          "first_tx_date": "2025-11-10"
+        }
+      ]
+    },
+    "mrdn": {
+      "base": [
+        {
+          "address": "0x8e7769d440b3460b92159dd9c6d17302b036e2d6",
+          "first_tx_date": "2025-11-26"
+        },
+        {
+          "address": "0x3210d7b21bfe1083c9dddbe17e8f947c9029a584",
+          "first_tx_date": "2025-11-26"
+        }
+      ]
+    },
+    "mogami": {
+      "base": [
+        {
+          "address": "0xfe0920a0a7f0f8a1ec689146c30c3bbef439bf8a",
+          "first_tx_date": "2025-10-24"
+        }
+      ]
+    },
+    "obol": {
+      "base": [
+        {
+          "address": "0xd744494e28b01073514ebc89987b305001ed257a",
+          "first_tx_date": "2026-06-07"
+        }
+      ]
+    },
+    "openfacilitator": {
+      "solana": [
+        {
+          "address": "Hbe1vdFs4EQVVAzcV12muHhr6DEKwrT9roMXGPLxLBLP",
+          "first_tx_date": "2026-01-01"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x7c766f5fd9ab3dc09acad5ecfacc99c4781efe29",
+          "first_tx_date": "2026-01-05"
+        }
+      ]
+    },
+    "openmid": {
+      "base": [
+        {
+          "address": "0x16e47d275198ed65916a560bab4af6330c36ae09",
+          "first_tx_date": "2025-12-14"
+        }
+      ]
+    },
+    "openx402": {
+      "base": [
+        {
+          "address": "0x97316fa4730bc7d3b295234f8e4d04a0a4c093e8",
+          "first_tx_date": "2025-10-16"
+        },
+        {
+          "address": "0x97db9b5291a218fc77198c285cefdc943ef74917",
+          "first_tx_date": "2025-10-16"
+        }
+      ],
+      "solana": [
+        {
+          "address": "5xvht4fYDs99yprfm4UeuHSLxMBRpotfBtUCQqM3oDNG",
+          "first_tx_date": "2025-10-16"
+        }
+      ]
+    },
+    "payAI": {
+      "solana": [
+        {
+          "address": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
+          "first_tx_date": "2025-07-01"
+        },
+        {
+          "address": "CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "8B5UKhwfAyFW67h58cBkQj1Ur6QXRgwWJJcQp8ZBsDPa",
+          "first_tx_date": "2025-12-08"
+        }
+      ],
+      "base": [
+        {
+          "address": "0xc6699d2aada6c36dfea5c248dd70f9cb0235cb63",
+          "first_tx_date": "2025-05-18"
+        },
+        {
+          "address": "0xb2bd29925cbbcea7628279c91945ca5b98bf371b",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x25659315106580ce2a787ceec5efb2d347b539c9",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xb8f41cb13b1f213da1e94e1b742ec1323235c48f",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xe575fa51af90957d66fab6d63355f1ed021b887b",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x03a3f7ce8e21e6f8d9fa14c67d8876b2470dc2f1",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x675707bc7d03089f820c1b7d49f7480083e8f4df",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0xf46833d4ac4f0f1405cc05c30edfd86770f721c9",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x2daaef6f941de214bf7d6daf322bc6bc7406accb",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x2fae4026a31f19183947f0a6045ef975ebfa9ca8",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0xe299c486066739c4a31609e1268d93229632dd47",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x6ccf245c883f9f3c6caee0687aa61daf7bc96e32",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0xaf990eef9846b63d896056050fdc0b28bca9c24b",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x489c40fc3c2a19ad8cb275b7dd6aa194e9219c4f",
+          "first_tx_date": "2025-12-08"
+        },
+        {
+          "address": "0x9df61a719ddae27c20a63a417271cc2c704654bd",
+          "first_tx_date": "2025-12-08"
+        }
+      ]
+    },
+    "polymer": {
+      "base": [
+        {
+          "address": "0x66c40946b0dffd04be467e18309857307ecd37cb",
+          "first_tx_date": "2025-10-27"
+        }
+      ]
+    },
+    "primer": {
+      "base": [
+        {
+          "address": "0x37dfb4033d5dd98fd335f24d0d42e8fe68d587d6",
+          "first_tx_date": "2025-12-14"
+        }
+      ]
+    },
+    "questflow": {
+      "base": [
+        {
+          "address": "0x724efafb051f17ae824afcdf3c0368ae312da264",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xa9a54ef09fc8b86bc747cec6ef8d6e81c38c6180",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x4638bc811c93bf5e60deed32325e93505f681576",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xd7d91a42dfadd906c5b9ccde7226d28251e4cd0f",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x4544b535938b67d2a410a98a7e3b0f8f68921ca7",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x59e8014a3b884392fbb679fe461da07b18c1ff81",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xe6123e6b389751c5f7e9349f3d626b105c1fe618",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xf70e7cb30b132fab2a0a5e80d41861aa133ea21b",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0x90da501fdbec74bb0549100967eb221fed79c99b",
+          "first_tx_date": "2025-10-29"
+        },
+        {
+          "address": "0xce7819f0b0b871733c933d1f486533bab95ec47b",
+          "first_tx_date": "2025-10-29"
+        }
+      ]
+    },
+    "relai": {
+      "solana": [
+        {
+          "address": "4x4ZhcqiT1FnirM8Ne97iVupkN4NcQgc2YYbE2jDZbZn",
+          "first_tx_date": "2026-01-23"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x1892f72fdb3a966b2ad8595aa5f7741ef72d6085",
+          "first_tx_date": "2026-01-23"
+        }
+      ]
+    },
+    "thirdweb": {
+      "base": [
+        {
+          "address": "0x80c08de1a05df2bd633cf520754e40fde3c794d3",
+          "first_tx_date": "2025-10-07"
+        },
+        {
+          "address": "0xaaca1ba9d2627cbc0739ba69890c30f95de046e4",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0xa1822b21202a24669eaf9277723d180cd6dae874",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0xec10243b54df1a71254f58873b389b7ecece89c2",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0x052aaae3cad5c095850246f8ffb228354c56752a",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0x91ddea05f741b34b63a7548338c90fc152c8631f",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0xea52f2c6f6287f554f9b54c5417e1e431fe5710e",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0x3a5ca1c6aa6576ae9c1c0e7fa2b4883346bc5aa0",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0x7e20b62bf36554b704774afb0fcc0ae8f899213b",
+          "first_tx_date": "2025-11-20"
+        },
+        {
+          "address": "0xd88a9a58806b895ff06744082c6a20b9d7184b0f",
+          "first_tx_date": "2025-11-20"
+        }
+      ],
+      "polygon": [
+        {
+          "address": "0x80c08de1a05df2bd633cf520754e40fde3c794d3",
+          "first_tx_date": "2025-10-07"
+        }
+      ]
+    },
+    "three-ws": {
+      "solana": [
+        {
+          "address": "WwwuGbqHrwF5RG89KhUbmRWEvjnRH9k5kVM5p7T3WwW",
+          "first_tx_date": "2026-07-16"
+        },
+        {
+          "address": "GGf9qBhJDCe1UUz4s4Vxq1uPPvcv7UW7sJTuj2Yo5XQj",
+          "first_tx_date": "2026-07-09"
+        }
+      ]
+    },
+    "treasure": {
+      "base": [
+        {
+          "address": "0xe07e9cbf9a55d02e3ac356ed4706353d98c5a618",
+          "first_tx_date": "2025-11-06"
+        }
+      ]
+    },
+    "ultravioletadao": {
+      "base": [
+        {
+          "address": "0x103040545ac5031a11e8c03dd11324c7333a13c7",
+          "first_tx_date": "2025-10-30"
+        }
+      ],
+      "solana": [
+        {
+          "address": "F742C4VfFLQ9zRQyithoj5229ZgtX2WqKCSFKgH2EThq",
+          "first_tx_date": "2025-10-30"
+        }
+      ]
+    },
+    "virtuals": {
+      "base": [
+        {
+          "address": "0x80735b3f7808e2e229ace880dbe85e80115631ca",
+          "first_tx_date": "2025-11-05"
+        }
+      ]
+    },
+    "x402jobs": {
+      "solana": [
+        {
+          "address": "561oabzy81vXYYbs1ZHR1bvpiEr6Nbfd6PGTxPshoz4p",
+          "first_tx_date": "2025-12-11"
+        }
+      ],
+      "base": [
+        {
+          "address": "0x51fec16843e49b99aaf9814e525aee1756e66a62",
+          "first_tx_date": "2025-12-11"
+        }
+      ]
+    },
+    "x402rs": {
+      "polygon": [
+        {
+          "address": "0xd8dfc729cbd05381647eb5540d756f4f8ad63eec",
+          "first_tx_date": "2025-04-01"
+        }
+      ],
+      "base": [
+        {
+          "address": "0xd8dfc729cbd05381647eb5540d756f4f8ad63eec",
+          "first_tx_date": "2024-12-05"
+        },
+        {
+          "address": "0x76eee8f0acabd6b49f1cc4e9656a0c8892f3332e",
+          "first_tx_date": "2025-10-26"
+        },
+        {
+          "address": "0x97d38aa5de015245dcca76305b53abe6da25f6a5",
+          "first_tx_date": "2025-10-24"
+        },
+        {
+          "address": "0x0168f80e035ea68b191faf9bfc12778c87d92008",
+          "first_tx_date": "2025-10-24"
+        },
+        {
+          "address": "0x5e437bee4321db862ac57085ea5eb97199c0ccc5",
+          "first_tx_date": "2025-10-24"
+        },
+        {
+          "address": "0xc19829b32324f116ee7f80d193f99e445968499a",
+          "first_tx_date": "2025-10-26"
+        }
+      ]
+    },
+    "xecho": {
+      "base": [
+        {
+          "address": "0x3be45f576696a2fd5a93c1330cd19f1607ab311d",
+          "first_tx_date": "2025-10-30"
+        }
+      ]
+    },
+    "polygon-facilitator": {
+      "polygon": [
+        {
+          "address": "0x29df60c005506AA325d7179F6e09eB4b4875dAde",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xF09A94831C18566781f70937f0996B96EfE691C8",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x42618f623Ec19beFf78dE9DbBFB653BfEaC05D09",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x3202643514D128FF0B4625D2682c0244CF58131c",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x11DA3fe5ADA6f5382Ebe972f14C3585DA4E65AeA",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x135DfE729F9bbd7F88181E1B708d7506fd499140",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xDcb0Ac359025dC0DB1e22e6d33F404e5c92A1564",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x99EFc08BB42282716fB59D221792f5207f714C9d",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xbE5115800247405f020197BF473eBFd085a2C635",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x5eAb3D78264Dab340340d6a37Ff0836464Ae5773",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xE5D4197eFd5D03E3f30cBf11C0fF63Eb95a0A656",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xfac8Edb989f1ba7F9dBb7A1233542D4e1fD6144F",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xaFdbfaCb5ed691bf0bCFA660901f299ce9775489",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x1e48Ed59a502D0B324CdAf83362865b3ff49ABa2",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xA1dcBDC2C34577ACD4A1152A98807B2f281A112e",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x9e281D4e26E1a4e7C27014E2ca8Cee7F2D44fa52",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x76FCb8ae3365A487E6EA235386C1cf3AbADeDA60",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x9523B120C75640469f1D16490Da0388928229452",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x153F3A70e4400c211d9B482b62aD721Bb02F96F6",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xd5dD012019C58882Dd507A8b3fCBB7b62e9a24c3",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xfff23108338C218F895d75980E14688218D4E92a",
+          "first_tx_date": null
+        },
+        {
+          "address": "0xF744e153Ef63f7EEe4a58e0F13761D16C2125EE3",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x0a8B10FE8Bd3072351600Adef4796F3F7aF72Ab0",
+          "first_tx_date": null
+        },
+        {
+          "address": "0x971b4079A618F72Fa0F1792b07ed5923dfBF3500",
+          "first_tx_date": null
+        }
+      ]
+    },
+    "unattributed-base-25e9": {
+      "base": [
+        {
+          "address": "0x25e9775b674bd128fbd78c6fd24c3199b1d376f0",
+          "first_tx_date": null
+        }
+      ]
+    },
+    "unattributed-polygon-7c08": {
+      "polygon": [
+        {
+          "address": "0x7c088b4c6dceae8889e1fcc8c52de8cb930f89a0",
+          "first_tx_date": null
+        }
+      ]
+    }
+  },
+  "curated_facilitators": [
+    "polygon-facilitator",
+    "unattributed-base-25e9",
+    "unattributed-polygon-7c08"
+  ],
+  "declared_facilitators": [],
+  "base_relayers_lower": [
+    "0x001ddabba5782ee48842318bd9ff4008647c8d9c",
+    "0x0168f80e035ea68b191faf9bfc12778c87d92008",
+    "0x021cc47adeca6673def958e324ca38023b80a5be",
+    "0x03a3f7ce8e21e6f8d9fa14c67d8876b2470dc2f1",
+    "0x052aaae3cad5c095850246f8ffb228354c56752a",
+    "0x06f0bfd2c8f36674df5cde852c1eed8025c268c9",
+    "0x103040545ac5031a11e8c03dd11324c7333a13c7",
+    "0x1363c7ff51ccce10258a7f7bddd63baab6aaf678",
+    "0x14fda13953fc30428938e6bf950d036e77214e52",
+    "0x15e2e2da7539ef1f652aa3c1d6142a535aa3d7ea",
+    "0x16e47d275198ed65916a560bab4af6330c36ae09",
+    "0x179761d9eed0f0d1599330cc94b0926e68ae87f1",
+    "0x1892f72fdb3a966b2ad8595aa5f7741ef72d6085",
+    "0x1fc230ee3c13d0d520d49360a967dbd1555c8326",
+    "0x222c4367a2950f3b53af260e111fc3060b0983ff",
+    "0x24d4f332d8e886fc005bb4a103bad21d9ebc2b7f",
+    "0x25659315106580ce2a787ceec5efb2d347b539c9",
+    "0x25e9775b674bd128fbd78c6fd24c3199b1d376f0",
+    "0x279e08f711182c79ba6d09669127a426228a4653",
+    "0x290d8b8edcafb25042725cb9e78bcac36b8865f8",
+    "0x2a89407a98a0732b7fd578c4e156b7166540eb5a",
+    "0x2bb201f1bb056eb738718bd7a3ad1bef24b883bb",
+    "0x2daaef6f941de214bf7d6daf322bc6bc7406accb",
+    "0x2fae4026a31f19183947f0a6045ef975ebfa9ca8",
+    "0x3210d7b21bfe1083c9dddbe17e8f947c9029a584",
+    "0x37dfb4033d5dd98fd335f24d0d42e8fe68d587d6",
+    "0x3a5ca1c6aa6576ae9c1c0e7fa2b4883346bc5aa0",
+    "0x3a70788150c7645a21b95b7062ab1784d3cc2104",
+    "0x3be45f576696a2fd5a93c1330cd19f1607ab311d",
+    "0x3f61093f61817b29d9556d3b092e67746af8cdfd",
+    "0x40272e2eac848ea70db07fd657d799bd309329c4",
+    "0x402feee072d655b85e08f1751af9ddbcd249521f",
+    "0x42dd53906b49c202e8e934b059dc019e04634b00",
+    "0x4544b535938b67d2a410a98a7e3b0f8f68921ca7",
+    "0x4638bc811c93bf5e60deed32325e93505f681576",
+    "0x47d8b3c9717e976f31025089384f23900750a5f4",
+    "0x489c40fc3c2a19ad8cb275b7dd6aa194e9219c4f",
+    "0x48ab4b0af4ddc2f666a3fcc43666c793889787a3",
+    "0x4c934c63c786157fefd990945b25ea60a0fb0205",
+    "0x4ffeffa616a1460570d1eb0390e264d45a199e91",
+    "0x51fec16843e49b99aaf9814e525aee1756e66a62",
+    "0x552300992857834c0ad41c8e1a6934a5e4a2e4ca",
+    "0x59b7ebc67a3d627fabaf06768c818638452ae704",
+    "0x59e8014a3b884392fbb679fe461da07b18c1ff81",
+    "0x5e437bee4321db862ac57085ea5eb97199c0ccc5",
+    "0x612d72dc8402bba997c61aa82ce718ea23b2df5d",
+    "0x625d8a65134079f8faaac39a7947c73d93c6ac39",
+    "0x64cc42b1ce598e3abcfbb64df4688521ddbf1f0a",
+    "0x65058cf664d0d07f68b663b0d4b4f12a5e331a38",
+    "0x66c40946b0dffd04be467e18309857307ecd37cb",
+    "0x675707bc7d03089f820c1b7d49f7480083e8f4df",
+    "0x67b9ce703d9ce658d7c4ac3c289cea112fe662af",
+    "0x6831508455a716f987782a1ab41e204856055cc2",
+    "0x68a96f41ff1e9f2e7b591a931a4ad224e7c07863",
+    "0x68efafe862d89ce66dd3d7b07d5a3747a0871164",
+    "0x6ccf245c883f9f3c6caee0687aa61daf7bc96e32",
+    "0x708e57b6650a9a741ab39cae1969ea1d2d10eca1",
+    "0x724efafb051f17ae824afcdf3c0368ae312da264",
+    "0x73b2b8df52fbe7c40fe78db52e3dffdd5db5ad07",
+    "0x76eee8f0acabd6b49f1cc4e9656a0c8892f3332e",
+    "0x772003a2e9c2ccc8af956870a37a66f64f8cec38",
+    "0x7c766f5fd9ab3dc09acad5ecfacc99c4781efe29",
+    "0x7e20b62bf36554b704774afb0fcc0ae8f899213b",
+    "0x7f6d822467df2a85f792d4508c5722ade96be056",
+    "0x7f72a02c682e908d46a5677fe937cdb612d94a3b",
+    "0x80735b3f7808e2e229ace880dbe85e80115631ca",
+    "0x80c08de1a05df2bd633cf520754e40fde3c794d3",
+    "0x87af99356d774312b73018b3b6562e1ae0e018c9",
+    "0x88800e08e20b45c9b1f0480cf759b5bf2f05180c",
+    "0x88e13d4c764a6c840ce722a0a3765f55a85b327e",
+    "0x8cda367232d78c067116e3260da881d2da8ffa39",
+    "0x8d8fa42584a727488eeb0e29405ad794a105bb9b",
+    "0x8e7769d440b3460b92159dd9c6d17302b036e2d6",
+    "0x8f5cb67b49555e614892b7233cfddebfb746e531",
+    "0x90d5e567017f6c696f1916f4365dd79985fce50f",
+    "0x90da501fdbec74bb0549100967eb221fed79c99b",
+    "0x91d313853ad458addda56b35a7686e2f38ff3952",
+    "0x91ddea05f741b34b63a7548338c90fc152c8631f",
+    "0x93f6601151ccb08f333ab4b1cccfb1e188c0be44",
+    "0x94701e1df9ae06642bf6027589b8e05dc7004813",
+    "0x97316fa4730bc7d3b295234f8e4d04a0a4c093e8",
+    "0x97acce27d5069544480bde0f04d9f47d7422a016",
+    "0x97d38aa5de015245dcca76305b53abe6da25f6a5",
+    "0x97db9b5291a218fc77198c285cefdc943ef74917",
+    "0x9aae2b0d1b9dc55ac9bab9556f9a26cb64995fb9",
+    "0x9c09faa49c4235a09677159ff14f17498ac48738",
+    "0x9df61a719ddae27c20a63a417271cc2c704654bd",
+    "0x9fb2714af0a84816f5c6322884f2907e33946b88",
+    "0xa1822b21202a24669eaf9277723d180cd6dae874",
+    "0xa32ccda98ba7529705a059bd2d213da8de10d101",
+    "0xa9a54ef09fc8b86bc747cec6ef8d6e81c38c6180",
+    "0xaa0df01e4d11decf2ad2c459c81d3a495e4f1925",
+    "0xaaca1ba9d2627cbc0739ba69890c30f95de046e4",
+    "0xadd5585c776b9b0ea77e9309c1299a40442d820f",
+    "0xaf990eef9846b63d896056050fdc0b28bca9c24b",
+    "0xb2bd29925cbbcea7628279c91945ca5b98bf371b",
+    "0xb578b7db22581507d62bdbeb85e06acd1be09e11",
+    "0xb5d25e1fa0718bf3e1bf698f96791d4e93632ec8",
+    "0xb70c4fe126de09bd292fe3d1e40c6d264ca6a52a",
+    "0xb87e1a2cc2b4643f2892768e80e41167f17c5860",
+    "0xb8f41cb13b1f213da1e94e1b742ec1323235c48f",
+    "0xc19829b32324f116ee7f80d193f99e445968499a",
+    "0xc6699d2aada6c36dfea5c248dd70f9cb0235cb63",
+    "0xc67b555b4a9d340ed7c5d87743163c31a75f2254",
+    "0xca5e87f82b3fa093800e6ad67d621a427d79c70d",
+    "0xcbb10c30a9a72fae9232f41cbbd566a097b4e03a",
+    "0xce7819f0b0b871733c933d1f486533bab95ec47b",
+    "0xce82eeec8e98e443ec34fda3c3e999cbe4cb6ac2",
+    "0xd2f74a14522d40e4a1d7fbb62aa97ce99fa1a7e5",
+    "0xd348e724e0ef36291a28dfeccf692399b0e179f8",
+    "0xd744494e28b01073514ebc89987b305001ed257a",
+    "0xd7469bf02d221968ab9f0c8b9351f55f8668ac4f",
+    "0xd7d91a42dfadd906c5b9ccde7226d28251e4cd0f",
+    "0xd88a9a58806b895ff06744082c6a20b9d7184b0f",
+    "0xd8dfc729cbd05381647eb5540d756f4f8ad63eec",
+    "0xd97c12726dcf994797c981d31cfb243d231189fb",
+    "0xdbdf3d8ed80f84c35d01c6c9f9271761bad90ba6",
+    "0xdc8fbad54bf5151405de488f45acd555517e0958",
+    "0xe07e9cbf9a55d02e3ac356ed4706353d98c5a618",
+    "0xe299c486066739c4a31609e1268d93229632dd47",
+    "0xe575fa51af90957d66fab6d63355f1ed021b887b",
+    "0xe6123e6b389751c5f7e9349f3d626b105c1fe618",
+    "0xe72f0af4cf41356d433723547f1412ca27fbb1b8",
+    "0xe74817f4cdc15844314812b2271276e64e890fae",
+    "0xea52f2c6f6287f554f9b54c5417e1e431fe5710e",
+    "0xec10243b54df1a71254f58873b389b7ecece89c2",
+    "0xf46833d4ac4f0f1405cc05c30edfd86770f721c9",
+    "0xf70e7cb30b132fab2a0a5e80d41861aa133ea21b",
+    "0xfe0920a0a7f0f8a1ec689146c30c3bbef439bf8a"
+  ],
+  "solana_relayers": [
+    "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
+    "34DmdeSbEnng2bmbSj9ActckY49km2HdhiyAwyXZucqP",
+    "4x4ZhcqiT1FnirM8Ne97iVupkN4NcQgc2YYbE2jDZbZn",
+    "561oabzy81vXYYbs1ZHR1bvpiEr6Nbfd6PGTxPshoz4p",
+    "5xvht4fYDs99yprfm4UeuHSLxMBRpotfBtUCQqM3oDNG",
+    "7NetKx8TuRMBpqYFKZCVetkNuvWCPTrgekmGrsJwTmfN",
+    "8B5UKhwfAyFW67h58cBkQj1Ur6QXRgwWJJcQp8ZBsDPa",
+    "8x8CzkTHTYkW18frrTR7HdCV6fsjenvcykJAXWvoPQW",
+    "92QcYJZpkwYyacR3G69QNR2JfjadQxd16cp5d7x5GEzU",
+    "93syNmtT1tTd5ZtPwHqzGf6CM7fKhMmArpv4AM4FtyNX",
+    "AepWpq3GQwL8CeKMtZyKtKPa7W91Coygh3ropAJapVdU",
+    "BENrLoUbndxoNMUS5JXApGMtNykLjFXXixMtpDwDR9SP",
+    "BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F",
+    "CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww",
+    "D6ZhtNQ5nT9ZnTHUbqXZsTx5MH2rPFiBBggX4hY1WePM",
+    "DEXVS3su4dZQWTvvPnLDJLRK1CeeKG6K3QqdzthgAkNV",
+    "DeXterR2kQm8AvRHnNPatWkE46TfAcMeBDjb6FySoAb8",
+    "DuQ4jFMmVABWGxabYHFkGzdyeJgS1hp4wrRuCtsJgT9a",
+    "F742C4VfFLQ9zRQyithoj5229ZgtX2WqKCSFKgH2EThq",
+    "GGf9qBhJDCe1UUz4s4Vxq1uPPvcv7UW7sJTuj2Yo5XQj",
+    "GVJJ7rdGiXr5xaYbRwRbjfaJL7fmwRygFi1H6aGqDveb",
+    "Hbe1vdFs4EQVVAzcV12muHhr6DEKwrT9roMXGPLxLBLP",
+    "Hc3sdEAsCGQcpgfivywog9uwtk8gUBUZgsxdME1EJy88",
+    "HsozMJWWHNADoZRmhDGKzua6XW6NNfNDdQ4CkE9i5wHt",
+    "L54zkaPQFeTn1UsEqieEXBqWrPShiaZEPD7mS5WXfQg",
+    "PcTZWki36z5Y82TAATKK48XUdfsgmS5oLkw2Ta7vWyK",
+    "WwwuGbqHrwF5RG89KhUbmRWEvjnRH9k5kVM5p7T3WwW"
+  ],
+  "relayers_by_chain": {
+    "base": [
+      "0x001ddabba5782ee48842318bd9ff4008647c8d9c",
+      "0x0168f80e035ea68b191faf9bfc12778c87d92008",
+      "0x021cc47adeca6673def958e324ca38023b80a5be",
+      "0x03a3f7ce8e21e6f8d9fa14c67d8876b2470dc2f1",
+      "0x052aaae3cad5c095850246f8ffb228354c56752a",
+      "0x06f0bfd2c8f36674df5cde852c1eed8025c268c9",
+      "0x103040545ac5031a11e8c03dd11324c7333a13c7",
+      "0x1363c7ff51ccce10258a7f7bddd63baab6aaf678",
+      "0x14fda13953fc30428938e6bf950d036e77214e52",
+      "0x15e2e2da7539ef1f652aa3c1d6142a535aa3d7ea",
+      "0x16e47d275198ed65916a560bab4af6330c36ae09",
+      "0x179761d9eed0f0d1599330cc94b0926e68ae87f1",
+      "0x1892f72fdb3a966b2ad8595aa5f7741ef72d6085",
+      "0x1fc230ee3c13d0d520d49360a967dbd1555c8326",
+      "0x222c4367a2950f3b53af260e111fc3060b0983ff",
+      "0x24d4f332d8e886fc005bb4a103bad21d9ebc2b7f",
+      "0x25659315106580ce2a787ceec5efb2d347b539c9",
+      "0x25e9775b674bd128fbd78c6fd24c3199b1d376f0",
+      "0x279e08f711182c79ba6d09669127a426228a4653",
+      "0x290d8b8edcafb25042725cb9e78bcac36b8865f8",
+      "0x2a89407a98a0732b7fd578c4e156b7166540eb5a",
+      "0x2bb201f1bb056eb738718bd7a3ad1bef24b883bb",
+      "0x2daaef6f941de214bf7d6daf322bc6bc7406accb",
+      "0x2fae4026a31f19183947f0a6045ef975ebfa9ca8",
+      "0x3210d7b21bfe1083c9dddbe17e8f947c9029a584",
+      "0x37dfb4033d5dd98fd335f24d0d42e8fe68d587d6",
+      "0x3a5ca1c6aa6576ae9c1c0e7fa2b4883346bc5aa0",
+      "0x3a70788150c7645a21b95b7062ab1784d3cc2104",
+      "0x3be45f576696a2fd5a93c1330cd19f1607ab311d",
+      "0x3f61093f61817b29d9556d3b092e67746af8cdfd",
+      "0x40272e2eac848ea70db07fd657d799bd309329c4",
+      "0x402feee072d655b85e08f1751af9ddbcd249521f",
+      "0x42dd53906b49c202e8e934b059dc019e04634b00",
+      "0x4544b535938b67d2a410a98a7e3b0f8f68921ca7",
+      "0x4638bc811c93bf5e60deed32325e93505f681576",
+      "0x47d8b3c9717e976f31025089384f23900750a5f4",
+      "0x489c40fc3c2a19ad8cb275b7dd6aa194e9219c4f",
+      "0x48ab4b0af4ddc2f666a3fcc43666c793889787a3",
+      "0x4c934c63c786157fefd990945b25ea60a0fb0205",
+      "0x4ffeffa616a1460570d1eb0390e264d45a199e91",
+      "0x51fec16843e49b99aaf9814e525aee1756e66a62",
+      "0x552300992857834c0ad41c8e1a6934a5e4a2e4ca",
+      "0x59b7ebc67a3d627fabaf06768c818638452ae704",
+      "0x59e8014a3b884392fbb679fe461da07b18c1ff81",
+      "0x5e437bee4321db862ac57085ea5eb97199c0ccc5",
+      "0x612d72dc8402bba997c61aa82ce718ea23b2df5d",
+      "0x625d8a65134079f8faaac39a7947c73d93c6ac39",
+      "0x64cc42b1ce598e3abcfbb64df4688521ddbf1f0a",
+      "0x65058cf664d0d07f68b663b0d4b4f12a5e331a38",
+      "0x66c40946b0dffd04be467e18309857307ecd37cb",
+      "0x675707bc7d03089f820c1b7d49f7480083e8f4df",
+      "0x67b9ce703d9ce658d7c4ac3c289cea112fe662af",
+      "0x6831508455a716f987782a1ab41e204856055cc2",
+      "0x68a96f41ff1e9f2e7b591a931a4ad224e7c07863",
+      "0x68efafe862d89ce66dd3d7b07d5a3747a0871164",
+      "0x6ccf245c883f9f3c6caee0687aa61daf7bc96e32",
+      "0x708e57b6650a9a741ab39cae1969ea1d2d10eca1",
+      "0x724efafb051f17ae824afcdf3c0368ae312da264",
+      "0x73b2b8df52fbe7c40fe78db52e3dffdd5db5ad07",
+      "0x76eee8f0acabd6b49f1cc4e9656a0c8892f3332e",
+      "0x772003a2e9c2ccc8af956870a37a66f64f8cec38",
+      "0x7c766f5fd9ab3dc09acad5ecfacc99c4781efe29",
+      "0x7e20b62bf36554b704774afb0fcc0ae8f899213b",
+      "0x7f6d822467df2a85f792d4508c5722ade96be056",
+      "0x7f72a02c682e908d46a5677fe937cdb612d94a3b",
+      "0x80735b3f7808e2e229ace880dbe85e80115631ca",
+      "0x80c08de1a05df2bd633cf520754e40fde3c794d3",
+      "0x87af99356d774312b73018b3b6562e1ae0e018c9",
+      "0x88800e08e20b45c9b1f0480cf759b5bf2f05180c",
+      "0x88e13d4c764a6c840ce722a0a3765f55a85b327e",
+      "0x8cda367232d78c067116e3260da881d2da8ffa39",
+      "0x8d8fa42584a727488eeb0e29405ad794a105bb9b",
+      "0x8e7769d440b3460b92159dd9c6d17302b036e2d6",
+      "0x8f5cb67b49555e614892b7233cfddebfb746e531",
+      "0x90d5e567017f6c696f1916f4365dd79985fce50f",
+      "0x90da501fdbec74bb0549100967eb221fed79c99b",
+      "0x91d313853ad458addda56b35a7686e2f38ff3952",
+      "0x91ddea05f741b34b63a7548338c90fc152c8631f",
+      "0x93f6601151ccb08f333ab4b1cccfb1e188c0be44",
+      "0x94701e1df9ae06642bf6027589b8e05dc7004813",
+      "0x97316fa4730bc7d3b295234f8e4d04a0a4c093e8",
+      "0x97acce27d5069544480bde0f04d9f47d7422a016",
+      "0x97d38aa5de015245dcca76305b53abe6da25f6a5",
+      "0x97db9b5291a218fc77198c285cefdc943ef74917",
+      "0x9aae2b0d1b9dc55ac9bab9556f9a26cb64995fb9",
+      "0x9c09faa49c4235a09677159ff14f17498ac48738",
+      "0x9df61a719ddae27c20a63a417271cc2c704654bd",
+      "0x9fb2714af0a84816f5c6322884f2907e33946b88",
+      "0xa1822b21202a24669eaf9277723d180cd6dae874",
+      "0xa32ccda98ba7529705a059bd2d213da8de10d101",
+      "0xa9a54ef09fc8b86bc747cec6ef8d6e81c38c6180",
+      "0xaa0df01e4d11decf2ad2c459c81d3a495e4f1925",
+      "0xaaca1ba9d2627cbc0739ba69890c30f95de046e4",
+      "0xadd5585c776b9b0ea77e9309c1299a40442d820f",
+      "0xaf990eef9846b63d896056050fdc0b28bca9c24b",
+      "0xb2bd29925cbbcea7628279c91945ca5b98bf371b",
+      "0xb578b7db22581507d62bdbeb85e06acd1be09e11",
+      "0xb5d25e1fa0718bf3e1bf698f96791d4e93632ec8",
+      "0xb70c4fe126de09bd292fe3d1e40c6d264ca6a52a",
+      "0xb87e1a2cc2b4643f2892768e80e41167f17c5860",
+      "0xb8f41cb13b1f213da1e94e1b742ec1323235c48f",
+      "0xc19829b32324f116ee7f80d193f99e445968499a",
+      "0xc6699d2aada6c36dfea5c248dd70f9cb0235cb63",
+      "0xc67b555b4a9d340ed7c5d87743163c31a75f2254",
+      "0xca5e87f82b3fa093800e6ad67d621a427d79c70d",
+      "0xcbb10c30a9a72fae9232f41cbbd566a097b4e03a",
+      "0xce7819f0b0b871733c933d1f486533bab95ec47b",
+      "0xce82eeec8e98e443ec34fda3c3e999cbe4cb6ac2",
+      "0xd2f74a14522d40e4a1d7fbb62aa97ce99fa1a7e5",
+      "0xd348e724e0ef36291a28dfeccf692399b0e179f8",
+      "0xd744494e28b01073514ebc89987b305001ed257a",
+      "0xd7469bf02d221968ab9f0c8b9351f55f8668ac4f",
+      "0xd7d91a42dfadd906c5b9ccde7226d28251e4cd0f",
+      "0xd88a9a58806b895ff06744082c6a20b9d7184b0f",
+      "0xd8dfc729cbd05381647eb5540d756f4f8ad63eec",
+      "0xd97c12726dcf994797c981d31cfb243d231189fb",
+      "0xdbdf3d8ed80f84c35d01c6c9f9271761bad90ba6",
+      "0xdc8fbad54bf5151405de488f45acd555517e0958",
+      "0xe07e9cbf9a55d02e3ac356ed4706353d98c5a618",
+      "0xe299c486066739c4a31609e1268d93229632dd47",
+      "0xe575fa51af90957d66fab6d63355f1ed021b887b",
+      "0xe6123e6b389751c5f7e9349f3d626b105c1fe618",
+      "0xe72f0af4cf41356d433723547f1412ca27fbb1b8",
+      "0xe74817f4cdc15844314812b2271276e64e890fae",
+      "0xea52f2c6f6287f554f9b54c5417e1e431fe5710e",
+      "0xec10243b54df1a71254f58873b389b7ecece89c2",
+      "0xf46833d4ac4f0f1405cc05c30edfd86770f721c9",
+      "0xf70e7cb30b132fab2a0a5e80d41861aa133ea21b",
+      "0xfe0920a0a7f0f8a1ec689146c30c3bbef439bf8a"
+    ],
+    "polygon": [
+      "0x06f0bfd2c8f36674df5cde852c1eed8025c268c9",
+      "0x0a8b10fe8bd3072351600adef4796f3f7af72ab0",
+      "0x11da3fe5ada6f5382ebe972f14c3585da4e65aea",
+      "0x135dfe729f9bbd7f88181e1b708d7506fd499140",
+      "0x153f3a70e4400c211d9b482b62ad721bb02f96f6",
+      "0x1e48ed59a502d0b324cdaf83362865b3ff49aba2",
+      "0x29df60c005506aa325d7179f6e09eb4b4875dade",
+      "0x3202643514d128ff0b4625d2682c0244cf58131c",
+      "0x42618f623ec19beff78de9dbbfb653bfeac05d09",
+      "0x5eab3d78264dab340340d6a37ff0836464ae5773",
+      "0x76fcb8ae3365a487e6ea235386c1cf3abadeda60",
+      "0x7c088b4c6dceae8889e1fcc8c52de8cb930f89a0",
+      "0x80c08de1a05df2bd633cf520754e40fde3c794d3",
+      "0x9523b120c75640469f1d16490da0388928229452",
+      "0x971b4079a618f72fa0f1792b07ed5923dfbf3500",
+      "0x99efc08bb42282716fb59d221792f5207f714c9d",
+      "0x9e281d4e26e1a4e7c27014e2ca8cee7f2d44fa52",
+      "0xa1dcbdc2c34577acd4a1152a98807b2f281a112e",
+      "0xafdbfacb5ed691bf0bcfa660901f299ce9775489",
+      "0xbe5115800247405f020197bf473ebfd085a2c635",
+      "0xd5dd012019c58882dd507a8b3fcbb7b62e9a24c3",
+      "0xd8dfc729cbd05381647eb5540d756f4f8ad63eec",
+      "0xdcb0ac359025dc0db1e22e6d33f404e5c92a1564",
+      "0xe5d4197efd5d03e3f30cbf11c0ff63eb95a0a656",
+      "0xf09a94831c18566781f70937f0996b96efe691c8",
+      "0xf744e153ef63f7eee4a58e0f13761d16c2125ee3",
+      "0xfac8edb989f1ba7f9dbb7a1233542d4e1fd6144f",
+      "0xfff23108338c218f895d75980e14688218d4e92a"
+    ],
+    "solana": [
+      "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
+      "34DmdeSbEnng2bmbSj9ActckY49km2HdhiyAwyXZucqP",
+      "4x4ZhcqiT1FnirM8Ne97iVupkN4NcQgc2YYbE2jDZbZn",
+      "561oabzy81vXYYbs1ZHR1bvpiEr6Nbfd6PGTxPshoz4p",
+      "5xvht4fYDs99yprfm4UeuHSLxMBRpotfBtUCQqM3oDNG",
+      "7NetKx8TuRMBpqYFKZCVetkNuvWCPTrgekmGrsJwTmfN",
+      "8B5UKhwfAyFW67h58cBkQj1Ur6QXRgwWJJcQp8ZBsDPa",
+      "8x8CzkTHTYkW18frrTR7HdCV6fsjenvcykJAXWvoPQW",
+      "92QcYJZpkwYyacR3G69QNR2JfjadQxd16cp5d7x5GEzU",
+      "93syNmtT1tTd5ZtPwHqzGf6CM7fKhMmArpv4AM4FtyNX",
+      "AepWpq3GQwL8CeKMtZyKtKPa7W91Coygh3ropAJapVdU",
+      "BENrLoUbndxoNMUS5JXApGMtNykLjFXXixMtpDwDR9SP",
+      "BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F",
+      "CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww",
+      "D6ZhtNQ5nT9ZnTHUbqXZsTx5MH2rPFiBBggX4hY1WePM",
+      "DEXVS3su4dZQWTvvPnLDJLRK1CeeKG6K3QqdzthgAkNV",
+      "DeXterR2kQm8AvRHnNPatWkE46TfAcMeBDjb6FySoAb8",
+      "DuQ4jFMmVABWGxabYHFkGzdyeJgS1hp4wrRuCtsJgT9a",
+      "F742C4VfFLQ9zRQyithoj5229ZgtX2WqKCSFKgH2EThq",
+      "GGf9qBhJDCe1UUz4s4Vxq1uPPvcv7UW7sJTuj2Yo5XQj",
+      "GVJJ7rdGiXr5xaYbRwRbjfaJL7fmwRygFi1H6aGqDveb",
+      "Hbe1vdFs4EQVVAzcV12muHhr6DEKwrT9roMXGPLxLBLP",
+      "Hc3sdEAsCGQcpgfivywog9uwtk8gUBUZgsxdME1EJy88",
+      "HsozMJWWHNADoZRmhDGKzua6XW6NNfNDdQ4CkE9i5wHt",
+      "L54zkaPQFeTn1UsEqieEXBqWrPShiaZEPD7mS5WXfQg",
+      "PcTZWki36z5Y82TAATKK48XUdfsgmS5oLkw2Ta7vWyK",
+      "WwwuGbqHrwF5RG89KhUbmRWEvjnRH9k5kVM5p7T3WwW"
+    ]
+  },
+  "counts": {
+    "facilitators": 36,
+    "base_relayers": 129,
+    "solana_relayers": 27,
+    "by_chain": {
+      "base": 129,
+      "polygon": 28,
+      "solana": 27
+    }
+  }
+}

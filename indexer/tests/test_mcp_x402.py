@@ -235,7 +235,18 @@ def test_mcp_and_x402(tmp_path, monkeypatch):
                                 "api_key": "sk_live_1"})
     assert out["grade"] and out["score_version"] == 4
 
-    # paid tool without key/payment -> payment_required instructions
+    # free-for-now default (2026-08-15): keyless, unpaid trust_score is
+    # SERVED, with a pricing note pointing at the optional receipts lane
+    out = _tool("trust_score", {"chain": "base", "address": SELLER})
+    assert out["grade"] and out["score_version"] == 4
+    assert out["pricing"].startswith("free — no key, no signup")
+    # ...and the REST lane serves keyless+unpaid too, same note
+    s, b, _ = _req(f"/v1/trust/base/{SELLER}")
+    assert s == 200 and b["grade"]
+    assert b["pricing"].startswith("free — no key, no signup")
+
+    # X402_FREE_MODE=0 restores the hard gate: unpaid -> instructions
+    monkeypatch.setattr(trust_api, "FREE_MODE", False)
     out = _tool("trust_score", {"chain": "base", "address": SELLER})
     assert out["payment_required"]["accepts"][0]["payTo"] == PAYTO
 

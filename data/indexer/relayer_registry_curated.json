@@ -1,0 +1,51 @@
+{
+  "note": "Curated facilitator relayer sets that x402scan's source does NOT carry, added so the x402-scoping isn't blind to real facilitators. Each entry cites an authoritative source. build_relayer_registry.py merges these into the generated registry; registry_check.py excludes them from the x402scan drift diff (x402scan not listing them is expected, not drift).",
+  "sources": {
+    "polygon-facilitator": "https://agentic-docs.polygon.technology/general/x402/guides/using-polygon-facilitator/",
+    "unattributed-base-25e9": "https://basescan.org/address/0x25e9775b674bd128fbd78c6fd24c3199b1d376f0",
+    "unattributed-polygon-7c08": "https://polygonscan.com/address/0x7c088b4c6dceae8889e1fcc8c52de8cb930f89a0"
+  },
+  "facilitators": {
+    "polygon-facilitator": {
+      "_provenance": "Polygon Labs' official x402 Facilitator (x402.polygon.technology). Documented rotating relayer pool of 24 keys (x402_1/x402_2/x402_3, 8 each). Confirmed on-chain: all 24 appear as tx.from on Polygon USDC transferWithAuthorization, and Polygonscan name-tags them 'x402 Facilitator'. x402scan's facilitator source omits this operator, which is why our x402scan-derived Polygon set (corbits/thirdweb/x402rs, 3 addrs) was near-dormant and scoped Polygon x402 to 0.",
+      "polygon": [
+        {"address": "0x29df60c005506AA325d7179F6e09eB4b4875dAde", "first_tx_date": null},
+        {"address": "0xF09A94831C18566781f70937f0996B96EfE691C8", "first_tx_date": null},
+        {"address": "0x42618f623Ec19beFf78dE9DbBFB653BfEaC05D09", "first_tx_date": null},
+        {"address": "0x3202643514D128FF0B4625D2682c0244CF58131c", "first_tx_date": null},
+        {"address": "0x11DA3fe5ADA6f5382Ebe972f14C3585DA4E65AeA", "first_tx_date": null},
+        {"address": "0x135DfE729F9bbd7F88181E1B708d7506fd499140", "first_tx_date": null},
+        {"address": "0xDcb0Ac359025dC0DB1e22e6d33F404e5c92A1564", "first_tx_date": null},
+        {"address": "0x99EFc08BB42282716fB59D221792f5207f714C9d", "first_tx_date": null},
+        {"address": "0xbE5115800247405f020197BF473eBFd085a2C635", "first_tx_date": null},
+        {"address": "0x5eAb3D78264Dab340340d6a37Ff0836464Ae5773", "first_tx_date": null},
+        {"address": "0xE5D4197eFd5D03E3f30cBf11C0fF63Eb95a0A656", "first_tx_date": null},
+        {"address": "0xfac8Edb989f1ba7F9dBb7A1233542D4e1fD6144F", "first_tx_date": null},
+        {"address": "0xaFdbfaCb5ed691bf0bCFA660901f299ce9775489", "first_tx_date": null},
+        {"address": "0x1e48Ed59a502D0B324CdAf83362865b3ff49ABa2", "first_tx_date": null},
+        {"address": "0xA1dcBDC2C34577ACD4A1152A98807B2f281A112e", "first_tx_date": null},
+        {"address": "0x9e281D4e26E1a4e7C27014E2ca8Cee7F2D44fa52", "first_tx_date": null},
+        {"address": "0x76FCb8ae3365A487E6EA235386C1cf3AbADeDA60", "first_tx_date": null},
+        {"address": "0x9523B120C75640469f1D16490Da0388928229452", "first_tx_date": null},
+        {"address": "0x153F3A70e4400c211d9B482b62aD721Bb02F96F6", "first_tx_date": null},
+        {"address": "0xd5dD012019C58882Dd507A8b3fCBB7b62e9a24c3", "first_tx_date": null},
+        {"address": "0xfff23108338C218F895d75980E14688218D4E92a", "first_tx_date": null},
+        {"address": "0xF744e153Ef63f7EEe4a58e0F13761D16C2125EE3", "first_tx_date": null},
+        {"address": "0x0a8B10FE8Bd3072351600Adef4796F3F7aF72Ab0", "first_tx_date": null},
+        {"address": "0x971b4079A618F72Fa0F1792b07ed5923dfBF3500", "first_tx_date": null}
+      ]
+    },
+    "unattributed-base-25e9": {
+      "_provenance": "merona-DISCOVERED via facilitator-watch (EVM leads-to-review, 2026-08-10), NOT operator-declared. On-chain behavioral evidence only: unlabeled EOA (no Basescan name tag), relays EIP-3009 (tx.from = this address, distinct from the EIP-3009 authorizer) across 700 distinct sellers on Base. PAYER-DIVERSITY VERIFIED pre-admission (DB query 2026-08-10): 5,459 settlements, 4,646 DISTINCT PAYERS, 700 sellers, 0 self-pay — a many-buyers-to-many-sellers marketplace, which rules out the prober/disperser pattern (a prober shows ~1 payer; merona's own delivery sweep is that shape). Contrast the two bundlers rejected the same day (0x211d.../0xe196..., Etherscan/Basescan-tagged 'ERC-4337 Bundler', 9-11 sellers). Operator unknown — attributed as 'unattributed-base' pending identification; admitted on breadth + relay pattern + payer diversity, not on a documented source.",
+      "base": [
+        {"address": "0x25e9775b674bd128fbd78c6fd24c3199b1d376f0", "first_tx_date": null}
+      ]
+    },
+    "unattributed-polygon-7c08": {
+      "_provenance": "merona-DISCOVERED via facilitator-watch (EVM leads-to-review, 2026-08-10), NOT operator-declared. On-chain behavioral evidence only: unlabeled EOA (no Polygonscan name tag, no bundler/infra label found), relays EIP-3009 across 115 distinct sellers on Polygon with 660 witnessed settlements (~$60,897). PAYER-DIVERSITY VERIFIED pre-admission (DB query 2026-08-10): 104 DISTINCT PAYERS, 115 sellers, 0 self-pay — genuine independent demand despite the atypically high ~$92/settlement (46x ecosystem average; big-ticket use case, not a disbursement wallet). Materially restates Polygon scoped volume (previously near-zero). Operator unknown — attributed as 'unattributed-polygon' pending identification; admitted on breadth + relay pattern + payer diversity, not a documented source.",
+      "polygon": [
+        {"address": "0x7c088b4c6dceae8889e1fcc8c52de8cb930f89a0", "first_tx_date": null}
+      ]
+    }
+  }
+}

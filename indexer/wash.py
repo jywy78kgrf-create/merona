@@ -62,6 +62,19 @@ TOP_SELLERS = int(os.environ.get("WASH_TOP_SELLERS", "150"))
 SELF_THRESH = float(os.environ.get("WASH_SELF_THRESH", "0.20"))
 FUNDED_THRESH = float(os.environ.get("WASH_FUNDED_THRESH", "0.20"))
 RPC_TIMEOUT = float(os.environ.get("WASH_RPC_TIMEOUT", "20"))
+# Statement timeout for the wash/clean pass (ms). 600000 (10 min) fit a
+# same-day run but not a multi-day catch-up: on 2026-08-12 a 3-day catch-up's
+# Polygon clean-metrics aggregate (indexer/wash.py's per-chain clean loop)
+# blew past 10 min and got canceled mid-query, which (pre-rollback-fix)
+# cascaded into solana clean + every score pass failing InFailedSqlTransaction.
+# Same shape as daily_snapshot.py's heavy off-peak passes (statement_timeout
+# lifted to '0'/unbounded there), but explicitly bounded here rather than
+# unbounded — an unbounded clean-metrics query is exactly the kind of thing
+# that can run past systemd's TimeoutStartSec and take the whole service down
+# with it (see deploy/run.sh's timeout wrapper around anchor.sh/attest.sh for
+# the same reasoning). 30 min comfortably covers a multi-day catch-up while
+# still guaranteeing the pass eventually gives up and moves on.
+WASH_STATEMENT_TIMEOUT_MS = int(os.environ.get("WASH_STATEMENT_TIMEOUT_MS", "1800000"))
 # Single-payer concentration thresholds (pattern 3 above). All three must
 # hold before a seller is flagged: a high top-payer share ALONE would catch
 # every honest seller's first week (one customer = 100% share); the tx/volume
@@ -286,7 +299,8 @@ def run_wash(store, date: str) -> None:
     # used to abort the whole pass (silently, pre-rollback-fix). No-op on
     # SQLite, which has no SET.
     try:
-        store.db.execute("SET statement_timeout='600000'")   # 10 min
+        store.db.execute(
+            f"SET statement_timeout='{WASH_STATEMENT_TIMEOUT_MS}'")   # 30 min
     except Exception:
         pass
 
@@ -559,6 +573,22 @@ def run_wash(store, date: str) -> None:
                   f"concentration-flagged sellers + self-pay)")
         except Exception as e:
             print(f"[wash] clean metrics {ch} failed: {e}", file=sys.stderr)
+            # Postgres: a failed statement (e.g. a statement-timeout cancel on
+            # a 3-day catch-up) aborts the whole transaction; every later
+            # query on this connection then dies with InFailedSqlTransaction
+            # until a rollback. WASH_CHAINS is base+polygon in one loop, and
+            # this is the section that runs right before scores.py joins the
+            # same connection — without this, one chain's timeout took out
+            # the other chain's clean metrics AND every score pass downstream
+            # (observed 2026-08-12: polygon clean-metrics timeout here left
+            # solana clean + endpoint/seller/payer scores all failing
+            # InFailedSqlTransaction). Isolated per chain, so each iteration
+            # must clear the poison before the next chain (or Solana below)
+            # runs on the same store.
+            try:
+                store.db.rollback()
+            except Exception:
+                pass
 
     # SOLANA clean (v2) — GATED. Solana has no eth_getLogs equivalent, so its
     # funded-loop signal comes from an off-rail funding graph built by a separate
@@ -586,3 +616,12 @@ def run_wash(store, date: str) -> None:
                       f"{gpath} — skipped", file=sys.stderr)
         except Exception as e:
             print(f"[wash] solana clean failed (isolated): {e}", file=sys.stderr)
+            # Same poisoning risk as the base/polygon clean-metrics except
+            # above: this is the LAST thing wash.run_wash does, and
+            # scores.run_scores joins the same connection right after it
+            # returns — an unrolled-back failure here silently carried
+            # straight into endpoint/seller/payer scores (2026-08-12).
+            try:
+                store.db.rollback()
+            except Exception:
+                pass

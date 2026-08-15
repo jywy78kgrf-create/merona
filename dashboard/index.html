@@ -69,6 +69,26 @@
   .lab .livedot{display:inline-block;width:6px;height:6px;border-radius:50%;
     background:#1d8a5e;margin-left:5px;vertical-align:1px;
     animation:livedot 2.4s ease-in-out infinite}
+  /* baseline is stale (window_capped): amber, not green — the pulse is a
+     bounded recent-activity count, not a verified since-baseline delta */
+  .lab .livedot.catchup{background:#d99a2b}
+  /* solana has no live pulse (SPL settles differently) — its count moves
+     only at the nightly cycle; grey, no animation, says so */
+  .lab .livedot.nightly{background:#9aa3ad;animation:none}
+  /* .q .lab sets text-transform:uppercase for the metric captions; the
+     state label is sentence case, so it must opt out explicitly. nowrap
+     keeps "Catching up" on one line beside the caption. */
+  .lab .livelbl{font-size:.78em;letter-spacing:.02em;text-transform:none;
+    white-space:nowrap;margin-left:4px;opacity:.75;position:relative;
+    top:-1.5px}
+  /* the label carries the same state colour as its dot, and breathes with
+     it (same keyframes + duration, so they stay in phase) */
+  .lab .livelbl.live{color:#1d8a5e;opacity:1;
+    animation:livedot 2.4s ease-in-out infinite}
+  .lab .livelbl.catchup{color:#d99a2b;opacity:1;
+    animation:livedot 2.4s ease-in-out infinite}
+  .lab .livelbl.nightly{color:#9aa3ad;animation:none}
+  @media(prefers-reduced-motion:reduce){.lab .livelbl{animation:none}}
   @keyframes livedot{0%,100%{opacity:.35}50%{opacity:1}}
   @media(prefers-reduced-motion:reduce){.lab .livedot{animation:none}}
   .hnav{display:flex; align-items:baseline; gap:clamp(16px,2.2vw,30px);
@@ -173,10 +193,10 @@
      Hairline dividers split the four; negative margins reach the tile edge. */
   .qgrid{display:grid; grid-template-columns:1fr 1fr;
     margin:3px -20px -10px; border-top:1px solid var(--line)}
-  .q{padding:11px 18px; display:flex; flex-direction:column; gap:5px; min-width:0}
+  .q{padding:8px 18px; display:flex; flex-direction:column; gap:4px; min-width:0}
   .q.tl,.q.tr{border-bottom:1px solid var(--line)}
   .q.tl,.q.bl{border-right:1px solid var(--line)}
-  .q .num{font-family:var(--sans); font-size:clamp(23px,2.4vw,30px); font-weight:600;
+  .q .num{font-family:var(--sans); font-size:clamp(20px,2.05vw,26px); font-weight:600;
     letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums}
   .q.vol .num{color:var(--clean)}
   .q .num.muted{color:#a89a8b}
@@ -208,9 +228,9 @@
   .q .rmini:empty{display:none}
   .qgrid:has(+ .rflag:not(:empty)){margin-bottom:0}
   .q.bl{justify-content:center}
-  .q .pair{display:flex; flex-direction:column; gap:6.8px}
+  .q .pair{display:flex; flex-direction:column; gap:5px}
   .q .prow{display:flex; align-items:baseline; gap:7.6px}
-  .q .prow b{font-family:var(--mono); font-size:13.6px; font-weight:500;
+  .q .prow b{font-family:var(--mono); font-size:12.5px; font-weight:500;
     line-height:1; font-variant-numeric:tabular-nums}
   .q .prow span{font-size:7.6px; font-weight:600; letter-spacing:.14em;
     text-transform:uppercase; color:var(--sub)}
@@ -553,15 +573,19 @@
      (mobile HUD stays clean; the footer link still carries the feed there). -->
 <div class="freecard">
   <a class="stretch" href="/mismatches" aria-label="payTo mismatch feed"></a>
-  <div class="fc-kick"><span class="fc-dia"></span>FREE · PAYTO INTEGRITY</div>
+  <div class="fc-kick"><span class="fc-dia"></span>TRUST TOOLING FOR AGENTS</div>
   <h3>Safe to pay? Check first.</h3>
   <p>The payout wallet an endpoint advertises vs what it actually asks for —
   probed nightly, on-chain history attached.</p>
   <div class="fc-u"><span class="fc-l">ONE-SHOT</span><span class="fc-v">merona.io/check?q=wallet</span></div>
   <div class="fc-u"><span class="fc-l">BULK</span><span class="fc-v">merona.io/mismatches.json</span></div>
   <div class="fc-u"><span class="fc-l">AGENT GATE</span><span class="fc-v"><a class="sublink" href="https://api.merona.io/#evaluate">POST /v1/trust/evaluate</a></span></div>
-  <div class="fc-ft"><b>FREE</b> · NO KEY · NO SIGNUP</div>
+  <div class="fc-ft"><b>EVERYTHING FREE</b> · NO KEY · NO SIGNUP</div>
 </div>
+
+<!-- The floating paid-audit banner was retired 2026-08-15 (dashboard
+     decluttering): the audit keeps its caption-strip link, findings card,
+     and /delivery page. -->>
 
 <main>
   <div class="deck">
@@ -602,7 +626,7 @@
       <div class="crow"><span class="cdot"></span><span class="cname">Solana</span>
         <button class="chev" type="button" aria-label="details"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></button></div>
       <div class="qgrid">
-        <div class="q tl"><div class="num" data-f="solana.count">36,558</div><div class="lab">x402 settlements</div></div>
+        <div class="q tl"><div class="num" data-f="solana.count">36,558</div><div class="lab">x402 settlements <span class="livedot nightly" title="Solana settles via SPL — no intraday pulse; this count updates at the 02:17 UTC nightly cycle"></span><span class="livelbl nightly">Nightly</span></div></div>
         <div class="q tr vol"><div class="num" data-f="solana.tvol">$8,145</div><div class="lab" data-f="solana.tvollab">x402 volume</div></div>
         <div class="q bl"><div class="pair">
           <div class="prow"><b data-f="solana.sellersN">368</b><span>Sellers</span></div>
@@ -630,14 +654,14 @@
     <div class="pk"><span class="pdot v"></span>MCP FOR AGENTS</div>
     <div class="pt">Wire merona into your agent.</div>
     <div class="pl">POST api.merona.io/mcp · manifest: <span class="dim">/mcp.json</span></div>
-    <div class="pf">4 tools · free payTo checks · paid m.Scores · zero-install</div>
+    <div class="pf">4 tools · all free · zero-install</div>
   </a>
   <div class="ptile">
     <a class="stretch" href="https://api.merona.io/" aria-label="m.Score API"></a>
     <div class="pk"><span class="pdot o"></span>m.SCORE API</div>
     <div class="pt">Wash-aware trust scores.</div>
-    <div class="pl"><b>$0.005/call via x402</b> · <span class="dim">or keys:</span> api.merona.io</div>
-    <div class="pl">pro: bulk + history + 10× rate · <a class="sublink" href="https://api.merona.io/#pro">$300/mo</a></div>
+    <div class="pl"><b>free</b> · <span class="dim">no key —</span> api.merona.io</div>
+    <div class="pl">optional x402 receipts <b>$0.001/call</b> · <span class="dim">paid on the rails we audit</span></div>
     <div class="pf">grades A–F · cycle-detected · snapshot-verifiable</div>
   </div>
 </div>
@@ -723,7 +747,7 @@
   </div>
 </div>
 
-<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5" target="_blank" rel="noopener">On-chain anchors</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="https://smithery.ai/servers/michaelfitz/merona" target="_blank" rel="noopener">MCP on Smithery</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
+<div class="caption"><span class="caplinks">Scoped, not superset — the raw EIP-3009 firehose overstates dollars ~100×.<span class="sep">·</span><a href="https://github.com/jywy78kgrf-create/merona" target="_blank" rel="noopener">Methodology</a><span class="sep">·</span><a href="https://base.easscan.org/address/0x644678AD37833C0d52f0170f1F73A5e62Bc3e6d5" target="_blank" rel="noopener">On-chain anchors</a><span class="sep">·</span><a href="/findings">Findings</a><span class="sep">·</span><a href="/delivery">Paid delivery audit</a><span class="sep">·</span><a href="/mismatches.json">payTo mismatch feed — free</a><span class="sep">·</span><a href="https://smithery.ai/servers/michaelfitz/merona" target="_blank" rel="noopener">MCP on Smithery</a><span class="sep">·</span><a href="/editorial">Editorial</a><span class="sep">·</span><a href="/privacy">Privacy</a><span class="sep">·</span><a href="mailto:hello@merona.io">Contact</a><span class="sep">·</span>On an unattributed chain? <a href="https://github.com/jywy78kgrf-create/merona/blob/main/registrar/SELF-DECLARATION.md">Declare your relayer key</a> — free · signature-verified · retroactive</span></div>
 
 <script>
 (() => {
@@ -1335,7 +1359,7 @@
   // remains the verified figure; at 02:17 the anchor moves and deltas reset.
   // Numbers count up to each new measurement — animation of real increments,
   // never extrapolation between polls.
-  const _snapCounts={}, _liveDeltas={}, _shownCounts={};
+  const _snapCounts={}, _liveDeltas={}, _shownCounts={}, _liveCapped={};
   function _countUp(el,from,to){
     if(!el||from===to){ if(el) el.textContent=comma(to); return; }
     const t0=performance.now(), dur=900;
@@ -1347,20 +1371,38 @@
     let totalDelta=0;
     CH.forEach(c=>{
       const base=_snapCounts[c]; if(base==null) return;
-      const d=_liveDeltas[c]||0; totalDelta+=d;
-      const want=base+d;
+      const capped=!!_liveCapped[c];
+      const d=_liveDeltas[c]||0;
+      // window_capped means the published baseline has fallen stale (the
+      // Base incident: anchor frozen, gap only growing) and /live.json's
+      // delta for this chain is a bounded RECENT-window count, not a
+      // verified since-baseline total. Folding it into the headline would
+      // present a partial number as if it covered the whole gap — instead
+      // the headline holds at the last verified nightly figure, and the
+      // live dot alone communicates "catching up".
+      const want = capped ? base : base+d;
+      if(!capped) totalDelta+=d;
       document.querySelectorAll('[data-f="'+c+'.count"]').forEach(el=>{
         const from=_shownCounts[c]!=null?_shownCounts[c]:base;
         _countUp(el,from,want);
       });
       _shownCounts[c]=want;
-      // the card gains a quiet LIVE tick note once a real delta exists
       const lab=document.querySelector('[data-f="'+c+'.count"]')
         ?.parentElement?.querySelector('.lab');
-      if(lab&&d>0&&!lab.dataset.live){ lab.dataset.live='1';
-        lab.innerHTML='x402 settlements <span class="livedot" title="counting '
-          +'finalized on-chain settlements since the last nightly cycle — '
-          +'verified at 02:17 UTC"></span>'; }
+      if(!lab) return;
+      const wantState = capped ? 'catchup' : (d>0 ? 'live' : '');
+      if(wantState && lab.dataset.live!==wantState){
+        lab.dataset.live=wantState;
+        lab.innerHTML = capped
+          ? 'x402 settlements <span class="livedot catchup" title="baseline '
+            +'catching up — showing recent on-chain activity, not yet '
+            +'folded into the verified count"></span>'
+            +'<span class="livelbl catchup">Catching up</span>'
+          : 'x402 settlements <span class="livedot" title="counting '
+            +'finalized on-chain settlements since the last nightly cycle — '
+            +'verified at 02:17 UTC"></span>'
+            +'<span class="livelbl live">Live</span>';
+      }
     });
   }
   async function pollLive(){
@@ -1369,11 +1411,13 @@
       if(!r.ok) return;
       const L=await r.json();
       CH.forEach(c=>{ const e=L[c];
-        if(e&&typeof e.scoped_delta==='number') _liveDeltas[c]=e.scoped_delta; });
+        if(e&&typeof e.scoped_delta==='number') _liveDeltas[c]=e.scoped_delta;
+        _liveCapped[c]=!!(e&&e.window_capped); });
       _renderLive();
     }catch(e){/* pulse is optional; the nightly numbers stand on their own */}
   }
   setInterval(pollLive,60000); setTimeout(pollLive,2500);
+
 
   function drawPulse(P){
     const el=document.getElementById('pulse'); if(!el) return;

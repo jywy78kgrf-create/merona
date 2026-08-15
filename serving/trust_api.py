@@ -305,10 +305,23 @@ def _build_envelope(payload: dict) -> dict | None:
 
 
 PAY_DESC = "merona m.Score lookup — wash-aware x402 trust data"
-# per-seller delivery evidence is priced separately (deeper than a score
-# lookup: latest state + full paid-probe history) — double PRICE_USD by
-# default, independently tunable via its own env var.
-DELIVERY_PRICE_USD = float(os.environ.get("X402_PRICE_DELIVERY_USD", "0.01"))
+# per-seller delivery evidence keeps its own env var so it stays
+# independently tunable from the score-lookup price.
+DELIVERY_PRICE_USD = float(os.environ.get("X402_PRICE_DELIVERY_USD", "0.001"))
+# Free-for-now (2026-08-15): every payable route — REST /v1/ lanes and the
+# trust_score MCP tool — serves anonymous callers without a key or payment.
+# The x402 lane stays live as an OPTIONAL receipts path: attach X-PAYMENT
+# (or payment= on the tool) and verify+settle+receipt runs exactly as
+# before. Flip X402_FREE_MODE=0 to restore the hard paywall.
+FREE_MODE = os.environ.get("X402_FREE_MODE", "1") == "1"
+
+
+def _free_pricing_note() -> str:
+    if x402pay.enabled():
+        return ("free — no key, no signup. Optional: re-send with an x402 "
+                f"payment (${x402pay.PRICE_USD:g}) for a settlement-"
+                "receipted response.")
+    return "free — no key, no signup."
 DELIVERY_PAY_DESC = ("merona delivery evidence — genuine-payer probe "
                      "history with settlement txs")
 # mismatch feed (free MCP tools read it; same file the dashboard serves)
@@ -338,7 +351,37 @@ RECEIPTS_PATH = Path(os.environ.get(
 _delivery_cache = {"mtime": None, "states": {}, "history": {}}
 _DELIVERY_HISTORY_CAP = 200
 _RECEIPT_CHAINS = {"base": "base", "eip155:8453": "base",
-                   "polygon": "polygon", "eip155:137": "polygon"}
+                   "polygon": "polygon", "eip155:137": "polygon",
+                   "solana": "solana",
+                   # CAIP-2 mainnet form (genesis hash); keys here must
+                   # already be lowercase — the .lower() below is applied to
+                   # the receipt's `network` field before this lookup.
+                   "solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp": "solana"}
+
+# attest/payprobe.py (BASE_NETWORKS) can currently only PAY on Base: plain
+# EIP-3009 USDC transferWithAuthorization, no polygon or solana signing path
+# exists yet. So even though _RECEIPT_CHAINS/_EVAL_SUPPORTED_CHAINS accept
+# receipts and trust-evaluate requests for polygon/solana (trust SCORES do
+# cover all three chains), delivery EVIDENCE — a receipt from merona actually
+# paying a seller — can only ever exist for base today. delivery_lookup uses
+# this to tell "no evidence because we haven't probed this chain" apart from
+# "no evidence because this seller wasn't in the discovery set" (2026-08-12
+# audit, see SECURITY.md).
+PROBE_COVERAGE_CHAINS = ("base",)
+_PROBE_COVERAGE_REASON = (
+    "merona's paid delivery probes currently run on base only — absence of "
+    "evidence on this chain is a coverage statement, not a seller signal")
+
+
+def _norm_payto(addr: str) -> str:
+    """The one normalization rule for every key in the delivery path: EVM
+    (0x-prefixed) addresses are lowercased for case-insensitive comparison;
+    base58 (Solana) addresses are case-sensitive and must be preserved
+    exactly. Mirrors _adverse_findings' rule (fixed 2026-08-12) — this file
+    previously lowercased every pay_to/lookup key unconditionally, which is
+    harmless for EVM hex but silently case-folds a base58 wallet into one
+    that never matches the real address once solana receipts exist."""
+    return addr.lower() if _HEX_ADDR.match(addr) else addr
 
 
 def _delivery_states(lines) -> dict:
@@ -347,7 +390,18 @@ def _delivery_states(lines) -> dict:
     flag on the next paid probe. Only settled outcomes carry delivery
     information: `delivered` proves the seller serves paying customers;
     `settled_no_content` proves a charge with nothing served (settlement tx
-    recorded). Rejected/unreachable rows say nothing about delivery."""
+    recorded, AND the facilitator's own `success` field confirmed the
+    charge — see payprobe._classify_outcome). Rejected/unreachable rows say
+    nothing about delivery.
+
+    `settle_failed` (facilitator reported the settlement FAILED) and
+    `settled_unconfirmed` (older facilitator, no `success` field at all —
+    ambiguous) are deliberately excluded here, not just by omission from
+    the tuple below: neither is proof the seller was paid, so neither may
+    ever produce a `charged_unserved` public accusation, and neither counts
+    as delivery either. A receipt with one of these outcomes carries no
+    delivery verdict at all (falls through to whatever the next-most-recent
+    settled receipt says, same as `rejected`)."""
     rows = []
     for line in lines:
         try:
@@ -357,12 +411,15 @@ def _delivery_states(lines) -> dict:
         chain = _RECEIPT_CHAINS.get(str(r.get("network", "")).lower())
         if not chain or not r.get("pay_to"):
             continue
+        # explicit allowlist, not a denylist of the bad outcomes above — a
+        # new outcome string added later defaults to "no delivery verdict"
+        # rather than silently becoming adverse evidence.
         if r.get("outcome") not in ("delivered", "settled_no_content"):
             continue
         rows.append((str(r.get("ts") or ""), chain, r))
     out: dict = {}
     for ts, chain, r in sorted(rows):
-        key = (chain, r["pay_to"].lower())
+        key = (chain, _norm_payto(r["pay_to"]))
         if r["outcome"] == "delivered":
             out[key] = {
                 "status": "delivery_verified", "as_of": ts[:10],
@@ -403,7 +460,7 @@ def _delivery_history_states(lines) -> dict:
     rows.sort(key=lambda row: row[0])
     out: dict = {}
     for ts, chain, r in reversed(rows):
-        key = (chain, r["pay_to"].lower())
+        key = (chain, _norm_payto(r["pay_to"]))
         bucket = out.setdefault(key, [])
         if len(bucket) >= _DELIVERY_HISTORY_CAP:
             continue
@@ -452,7 +509,7 @@ def _delivery_history_map() -> dict:
 
 
 def _delivery(chain: str, address: str) -> dict | None:
-    return _delivery_map().get((chain, address.lower()))
+    return _delivery_map().get((chain, _norm_payto(address)))
 
 
 # Rotate the usage file once instead of growing without bound (audit LB-6): at
@@ -1565,7 +1622,8 @@ TRUST_API_SPEC = {
                                          "entirely with no catalog snapshot "
                                          "configured",
                       "note": "human-readable framing of what "
-                             "not_evaluated does and doesn't mean"},
+                             "not_evaluated does and doesn't mean",
+                      "probe_coverage": "see below"},
         },
         "discovery_basis": {"type": "object", "required": False,
             "description": "present on EVERY /v1/delivery response "
@@ -1575,6 +1633,17 @@ TRUST_API_SPEC = {
                            "catalog_max_last_updated} shape as the curated "
                            "basis entry above, from the same "
                            "_load_discovery_basis loader"},
+        "probe_coverage": {"type": "boolean", "required": True,
+            "description": "present on EVERY /v1/delivery response "
+                           "(not_evaluated or probed), evaluated or not: "
+                           "true iff `chain` is in PROBE_COVERAGE_CHAINS "
+                           "(base only today — payprobe pays plain "
+                           "EIP-3009 USDC on Base; polygon/solana probes "
+                           "don't exist yet, see attest/payprobe.py "
+                           "BASE_NETWORKS). Trust SCORES cover base/"
+                           "polygon/solana; delivery EVIDENCE does not. "
+                           "false responses also carry `probed_chains` "
+                           "(the chains actually covered) and `reason`."},
     },
 }
 
@@ -1702,13 +1771,21 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
 
     Chain validation matches /v1/trust/evaluate (_EVAL_SUPPORTED_CHAINS —
     base/polygon/solana, exact set); address validation is identical to
-    trust_lookup's (_HEX_ADDR lowercased / _B58_ADDR)."""
+    trust_lookup's (_HEX_ADDR lowercased / _B58_ADDR).
+
+    `probe_coverage` (see PROBE_COVERAGE_CHAINS) is stamped on every
+    response, evaluated or not: trust-evaluate accepts all three chains, but
+    payprobe can currently only PAY (and therefore only produce delivery
+    evidence) on base. A caller must be able to tell "we probed and found
+    nothing yet" apart from "we cannot probe this chain at all" without
+    guessing from an empty `probes` list."""
     if chain not in _EVAL_SUPPORTED_CHAINS:
         return 400, {"error": "bad chain"}
     if _HEX_ADDR.match(address):
-        address = address.lower()
+        address = _norm_payto(address)
     elif not _B58_ADDR.match(address):
         return 400, {"error": "bad address"}
+    covered = chain in PROBE_COVERAGE_CHAINS
     probes = _delivery_history_map().get((chain, address)) or []
     if not probes:
         # #2300 commitment #2: an explicit not_evaluated state. This used to
@@ -1721,7 +1798,11 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
         # here, not a placeholder for "nothing to report."
         resp = {"status": "not_evaluated",
                 "note": "address was not in the discovery set that fed the "
-                        "paid sweep — distinct from probed-but-inconclusive"}
+                        "paid sweep — distinct from probed-but-inconclusive",
+                "probe_coverage": covered}
+        if not covered:
+            resp["probed_chains"] = list(PROBE_COVERAGE_CHAINS)
+            resp["reason"] = _PROBE_COVERAGE_REASON
         if DISCOVERY_BASIS is not None:
             resp["discovery_basis"] = DISCOVERY_BASIS
         return 200, resp
@@ -1741,7 +1822,11 @@ def delivery_lookup(chain: str, address: str) -> tuple[int, dict]:
         "counts": counts,
         "verification": _verification(snap),
         "disclaimer": DELIVERY_DISCLAIMER,
+        "probe_coverage": covered,
     }
+    if not covered:
+        resp["probed_chains"] = list(PROBE_COVERAGE_CHAINS)
+        resp["reason"] = _PROBE_COVERAGE_REASON
     if DISCOVERY_BASIS is not None:
         resp["discovery_basis"] = DISCOVERY_BASIS
     return 200, resp
@@ -1778,8 +1863,8 @@ INDEX = {
     },
     "mcp": {"endpoint": "POST /mcp (streamable HTTP)",
             "manifest": "GET /mcp.json",
-            "tools": "payto_check + mismatch_feed + clean_stats free; "
-                     "trust_score paid"},
+            "tools": "payto_check + mismatch_feed + clean_stats + "
+                     "trust_score — all free (optional x402 receipts)"},
     "auth": "X-API-Key header, or pay per call via x402 (X-PAYMENT) when "
             "enabled — no key, no signup",
     "verification": "every score carries the snapshot sha256 + public anchor "
@@ -1866,8 +1951,11 @@ out, <code>direction: seller</code></span></div>
 <b># strip `envelope`, canonicalise, verify against /.well-known/jwks.json</b></pre>
 <p class="tag">Implements the trust-provider extension proposed in
 <a href="https://github.com/x402-foundation/x402/issues/2299">x402#2299</a> —
-the seller direction: merona actually pays sellers and records whether they
-deliver. Chains: base · polygon · solana. Provider descriptor:
+the seller direction: trust scores cover base · polygon · solana; merona
+actually pays sellers and records whether they deliver — that paid-probe
+evidence is base-only today (payprobe pays plain EIP-3009 USDC on Base;
+polygon/solana probes don't exist yet — see <code>probe_coverage</code> on
+<code>GET /v1/delivery</code>). Provider descriptor:
 <a href="/.well-known/x402-trust-provider">/.well-known/x402-trust-provider</a>
 · field-level schema: <a href="/v1/spec">/v1/spec</a>
 · signing key: <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>.</p>
@@ -1905,8 +1993,13 @@ All per-call pricing and the free feeds above are unchanged.</p>
 
 <h2 class="mcp">MCP — wire it into your agent</h2>
 <div class="ep mcp"><code>POST /mcp</code><span>streamable HTTP · manifest at <a href="/mcp.json">/mcp.json</a></span></div>
-<div class="ep mcp"><code>tools</code><span>payto_check · mismatch_feed · clean_stats free — trust_score paid</span></div>
+<div class="ep mcp"><code>tools</code><span>payto_check · mismatch_feed · clean_stats · trust_score — all free</span></div>
 <div class="ep mcp"><code>registry</code><span>listed on <a href="https://smithery.ai/servers/michaelfitz/merona">Smithery</a> and the official MCP registry (io.merona/settlement-index)</span></div>
+<div class="ep mcp"><code>claude</code><span>Settings &rarr; Connectors &rarr; Add custom connector &rarr;
+paste <code>https://api.merona.io/mcp</code> — no key, no signup; the three
+free tools work on the first call</span></div>
+<div class="ep mcp"><code>cursor / cline / continue</code><span>add to your MCP
+config as a streamable-HTTP server with the same URL</span></div>
 
 <h2>Free, no key</h2>
 <div class="ep"><code>merona.io/check?q=</code><span>one-shot payTo-integrity check (wallet or url)</span></div>
@@ -2157,6 +2250,19 @@ class Handler(BaseHTTPRequestHandler):
             # x402 lane: no key needed — pay per call on the rail we index.
             payable = path.startswith(("/v1/trust/", "/v1/agent/",
                                        "/v1/endpoint", "/v1/delivery/"))
+            # Free-for-now: anonymous + no X-PAYMENT -> served, with a note
+            # pointing at the optional receipts lane. Attaching X-PAYMENT
+            # opts into the unchanged verify+settle+receipt flow below, and
+            # the anonymous rate limit applied at the top of do_GET still
+            # bounds this lane.
+            if FREE_MODE and payable and not self.headers.get("X-PAYMENT"):
+                code, obj = self._route(path)
+                if code == 200 and isinstance(obj, dict):
+                    obj["pricing"] = _free_pricing_note()
+                self._send(code, obj,
+                           cache="public, max-age=300" if code == 200
+                           else "no-store")
+                return _meter(ident, path, code)
             if x402pay.enabled() and payable:
                 resource = PUBLIC_BASE + path
                 price_usd, desc = _pay_params(path)
@@ -2446,15 +2552,16 @@ MCP_PROTOCOL = "2025-06-18"
 MCP_INSTRUCTIONS = (
     "merona is an independent x402 settlement index — it does not run "
     "payment rails and holds no seller relationships.\n"
-    "Three tools are free, no API key or signup required: payto_check "
-    "checks one wallet or endpoint's payout integrity before you pay it; "
+    "All four tools are free — no API key, payment, or signup required: "
+    "payto_check checks one wallet or endpoint's payout integrity before "
+    "you pay it; "
     "mismatch_feed lists the current payout mismatches (top 10; full feed "
     "at merona.io/mismatches.json); "
-    "clean_stats reports wash-adjusted settlement volume per chain.\n"
-    f"trust_score is paid (${x402pay.PRICE_USD:g} per call, via x402 "
-    "payment or an API key) and returns a wash-aware seller grade with a "
-    "re-derivable snapshot hash.\n"
-    "Call the free tools freely — no auth handshake needed."
+    "clean_stats reports wash-adjusted settlement volume per chain; "
+    "trust_score returns a wash-aware seller grade with a re-derivable "
+    "snapshot hash (optionally pay "
+    f"${x402pay.PRICE_USD:g} via x402 for a settlement-receipted response).\n"
+    "Call them freely — no auth handshake needed."
 )
 MCP_TOOLS = [
     {"name": "payto_check",
@@ -2557,10 +2664,10 @@ MCP_TOOLS = [
                     "breakdown, wash flags including multi-hop cycle "
                     "detection, and the snapshot SHA so the result can be "
                     "re-derived independently. Requires chain and address. "
-                    f"Paid, ${x402pay.PRICE_USD:g} per call: pass "
-                    "payment=<base64 X-PAYMENT payload> to pay via x402, or "
-                    "api_key=<key>. Called without either, it returns x402 "
-                    "payment instructions rather than an error.",
+                    "Free — no key or payment needed. Optional: pass "
+                    "payment=<base64 X-PAYMENT payload> to pay "
+                    f"${x402pay.PRICE_USD:g} via x402 and receive a "
+                    "settlement-receipted response.",
      "annotations": {"title": "seller trust score", "readOnlyHint": True,
                      "destructiveHint": False, "idempotentHint": True,
                      "openWorldHint": False},
@@ -2611,7 +2718,12 @@ MCP_TOOLS = [
                                 "has bought from this seller: status "
                                 "delivery_verified (dated) or "
                                 "charged_unserved (payment settled, request "
-                                "refused; settlement tx included)."},
+                                "refused; settlement tx included). This "
+                                "score covers base/polygon/solana, but "
+                                "delivery evidence is base-only today "
+                                "(see PROBE_COVERAGE_CHAINS) — null here on "
+                                "polygon/solana means no probe was possible, "
+                                "not a clean record."},
              "payment_required": {
                  "type": "object",
                  "description": "x402 payment instructions; present only "
@@ -2848,6 +2960,19 @@ def _mcp_tool_call(handler, name: str, args: dict):
             code, obj = trust_lookup(chain, addr)
             return obj if code == 200 else {"error": obj, "status": code}
         pay = str(args.get("payment") or "")
+        # FREE BY DEFAULT (2026-08-15): adoption is the scarce resource at
+        # this stage, not revenue — the observed effect of the 402 gate was
+        # users walking, not paying. The x402 PAID PATH stays alive at a
+        # nominal price for agents that want an on-chain receipt (and so
+        # merona remains a functioning x402 seller on the rails it audits):
+        # attach `payment` and the verify+settle+receipt flow runs exactly
+        # as before. Flip X402_FREE_MODE=0 to restore the hard gate.
+        if FREE_MODE and not pay:
+            code, obj = trust_lookup(chain, addr)
+            if code != 200:
+                return {"error": obj, "status": code}
+            obj["pricing"] = _free_pricing_note()
+            return obj
         if x402pay.enabled():
             if not pay:
                 return {"payment_required":
