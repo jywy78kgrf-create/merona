@@ -1,4 +1,23 @@
 {
   "_note": "Facilitator SELF-DECLARATIONS, verified by relayer-key signature — see registrar/SELF-DECLARATION.md. Same shape as relayer_registry_curated.json; the _declaration block stores the signatures so every entry stays independently re-verifiable. NEVER merge an entry without running indexer/verify_declaration.py on it AND confirming real x402 facilitation activity.",
-  "facilitators": {}
+  "facilitators": {
+    "deskcrew": {
+      "base": [{ "address": "0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616", "first_tx_date": null }],
+      "polygon": [{ "address": "0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616", "first_tx_date": null }],
+      "avalanche": [{ "address": "0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616", "first_tx_date": null }],
+      "sei": [{ "address": "0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616", "first_tx_date": null }],
+      "solana": [{ "address": "EvJZ4f2AUy6BJihdP4cj3EsDaunA9RaDUpWg4nGemqHk", "first_tx_date": null }],
+      "_declaration": {
+        "contact": "hello@deskcrew.io",
+        "date": "2026-08-16",
+        "signatures": {
+          "base:0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616": "0x7ff3e1f201e09fd1179ab70640e3262f38cc93efa4e84d17ae2dbfa699932714767e95f9cb99a93717f181c29266489b304b625e434fe090a4d0faad1f64e0231b",
+          "polygon:0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616": "0xc31cc0155fbfaa6e8d928c0e2332e8c0e857a9cd92a174eb4095833f474733d106d072097452575b9c272c301e2b5d1db47059845a5d927feb93d6cd37114c391c",
+          "avalanche:0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616": "0xd77f1cf1b691682ee391f5e34b68898e204bde42cb823ef39f43dfb627048cb214b44e8eb13f201a681d83f66f1a11634637a6abc3ab74ca3e1fa34a2b06a1531b",
+          "sei:0xD5A8417eCDa7761ce4A670c5e3d15b63C709F616": "0xb3883a5bb347b8e1119b0a37dfecec64357e7a7e6cc2de0de4822923dc9db78247d9cf122d160d7eecf913b04234c5a4f37362293f95c3ffbe8f66f53b6c3a211b",
+          "solana:EvJZ4f2AUy6BJihdP4cj3EsDaunA9RaDUpWg4nGemqHk": "6gmQJ0HUjnE/+qOJVOfQB7LEp23DRLt7pLp12EMubyFveGkiXXpTLwjEZSeYg44uowQgfPRqQoOeYKUGD8S+BA=="
+        }
+      }
+    }
+  }
 }
